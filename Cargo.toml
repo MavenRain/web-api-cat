@@ -1,0 +1,24 @@
+[package]
+name = "web-api-cat"
+version = "0.1.0"
+edition = "2024"
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat). Exposes `document`, `Element` methods, and `fetch` as boa-cat NativeFns so scripts can read/mutate a parsed HTML document and make synchronous HTTP requests. No mut, no Rc/Arc, no interior mutability, no panics. Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+license = "MIT OR Apache-2.0"
+keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
+categories = ["web-programming"]
+
+[dependencies]
+boa-cat = "0.2"
+html-cat = "0.1"
+net-cat = "0.1"
+
+[dev-dependencies]
+proptest = "1"
+ecma-lex-cat = "0.1"
+ecma-parse-cat = "0.1"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+needless_pass_by_value = "warn"
+manual_map = "warn"
