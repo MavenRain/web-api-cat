@@ -1,8 +1,8 @@
 [package]
 name = "web-api-cat"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
-description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat). Exposes `document`, `Element` methods, and `fetch` as boa-cat NativeFns so scripts can read/mutate a parsed HTML document and make synchronous HTTP requests. No mut, no Rc/Arc, no interior mutability, no panics. Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat). Exposes `document`, `Element` methods, and `fetch` as boa-cat NativeFns so scripts can read/mutate a parsed HTML document and make synchronous HTTP requests. v0.2.0 adds `extract_document` that walks the post-script JS-side DOM tree and reconstructs a `dom_cat::Document` so callers can back-propagate scripted mutations into layout-cat. No mut, no Rc/Arc, no interior mutability, no panics. Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
 license = "MIT OR Apache-2.0"
 keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
 categories = ["web-programming"]
@@ -11,6 +11,7 @@ categories = ["web-programming"]
 boa-cat = "0.2"
 html-cat = "0.1"
 net-cat = "0.1"
+dom-cat = "0.1"
 
 [dev-dependencies]
 proptest = "1"
