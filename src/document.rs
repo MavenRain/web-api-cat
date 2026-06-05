@@ -35,6 +35,10 @@ fn build_document_object(root_value: Value, heap: Heap) -> (Value, Value, Heap) 
         "querySelector".to_owned(),
         Value::Native(document_query_selector_impl),
     );
+    let _ = props.insert(
+        crate::cookie::PROPERTY_KEY.to_owned(),
+        Value::String(String::new()),
+    );
     let (doc_id, heap) = heap.alloc_object(Object::from_properties(props));
     (Value::Object(doc_id), root_value, heap)
 }

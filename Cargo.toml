@@ -1,8 +1,8 @@
 [package]
 name = "web-api-cat"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
-description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat). Exposes `document`, `Element` methods, and `fetch` as boa-cat NativeFns so scripts can read/mutate a parsed HTML document and make synchronous HTTP requests. v0.2.0 adds `extract_document` that walks the post-script JS-side DOM tree and reconstructs a `dom_cat::Document` so callers can back-propagate scripted mutations into layout-cat. No mut, no Rc/Arc, no interior mutability, no panics. Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat). Exposes `document`, `Element` methods, and `fetch` as boa-cat NativeFns so scripts can read/mutate a parsed HTML document and make synchronous HTTP requests. v0.3.0 adds the `cookie` module: `set_document_cookie(document_value, heap, &str) -> Heap` and `get_document_cookie(document_value, &heap) -> Option<String>` so hosts can serialize their cookie jar into `document.cookie` before each script run and read back any writes after.  The host owns visibility filters (e.g. `HttpOnly`); this crate only shuttles a string in and out.  No mut, no Rc/Arc, no interior mutability, no panics. Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
 license = "MIT OR Apache-2.0"
 keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
 categories = ["web-programming"]

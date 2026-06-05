@@ -22,6 +22,7 @@
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 #![allow(clippy::similar_names)]
 
+pub mod cookie;
 pub mod document;
 pub mod element;
 pub mod error;
@@ -29,6 +30,7 @@ pub mod extract;
 pub mod fetch;
 pub mod install;
 
+pub use cookie::{get_document_cookie, set_document_cookie};
 pub use error::Error;
 pub use extract::extract_document;
 pub use install::install;
