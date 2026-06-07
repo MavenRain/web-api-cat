@@ -30,7 +30,9 @@ pub mod extract;
 pub mod fetch;
 pub mod install;
 
-pub use cookie::{get_document_cookie, set_document_cookie};
+pub use cookie::{
+    get_document_cookie, install_cookie_accessor, read_cookie_writes, set_document_cookie,
+};
 pub use error::Error;
 pub use extract::extract_document;
 pub use install::install;
