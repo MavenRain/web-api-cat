@@ -1,14 +1,14 @@
 [package]
 name = "web-api-cat"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
-description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.5.0 bumps to boa-cat 0.6 + ecma-parse-cat 0.2 to track the async stack across the workspace: existing match arms gain `Value::Promise(_) => None` so DOM extraction skips engine-allocated promises, and the v0.4 `document.cookie` accessor pair continues to work unchanged on top of the new engine surface.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.6.0 bumps to boa-cat 0.7 + ecma-parse-cat 0.3 so the v0.4 `document.cookie` accessor pair and the v0.5 `Value::Promise(_)` arms compose with user-supplied scripts using natural async syntax (`async () => body`, `async function foo() { ... }`, and reserved-word member access like `obj.catch(cb)`).  No source change.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
 license = "MIT OR Apache-2.0"
 keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
 categories = ["web-programming"]
 
 [dependencies]
-boa-cat = "0.6"
+boa-cat = "0.7"
 html-cat = "0.1"
 net-cat = "0.1"
 dom-cat = "0.1"
@@ -16,7 +16,7 @@ dom-cat = "0.1"
 [dev-dependencies]
 proptest = "1"
 ecma-lex-cat = "0.1"
-ecma-parse-cat = "0.2"
+ecma-parse-cat = "0.3"
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }
