@@ -117,7 +117,8 @@ fn object_id_of(value: &Value) -> Option<ObjectId> {
         | Value::Number(_)
         | Value::String(_)
         | Value::Function(_)
-        | Value::Native(_) => None,
+        | Value::Native(_)
+        | Value::Promise(_) => None,
     }
 }
 
@@ -145,7 +146,8 @@ fn collect_attributes(object: &Object, heap: &Heap) -> Vec<(String, String)> {
                     | Value::Number(_)
                     | Value::Object(_)
                     | Value::Function(_)
-                    | Value::Native(_) => None,
+                    | Value::Native(_)
+                    | Value::Promise(_) => None,
                 })
                 .collect()
         })

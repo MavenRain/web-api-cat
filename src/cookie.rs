@@ -132,7 +132,8 @@ fn read_string_property(value: &Value, heap: &Heap, key: &str) -> Option<String>
         | Value::Number(_)
         | Value::Object(_)
         | Value::Function(_)
-        | Value::Native(_) => None,
+        | Value::Native(_)
+        | Value::Promise(_) => None,
     })
 }
 
@@ -145,7 +146,8 @@ fn object_id_of(value: &Value) -> Option<ObjectId> {
         | Value::Number(_)
         | Value::String(_)
         | Value::Function(_)
-        | Value::Native(_) => None,
+        | Value::Native(_)
+        | Value::Promise(_) => None,
     }
 }
 
@@ -183,7 +185,9 @@ fn string_arg(args: &[Value], idx: usize) -> String {
         Some(Value::Boolean(b)) => format!("{b}"),
         Some(Value::Null) => "null".to_owned(),
         Some(Value::Undefined) | None => String::new(),
-        Some(Value::Object(_) | Value::Function(_) | Value::Native(_)) => "[object]".to_owned(),
+        Some(Value::Object(_) | Value::Function(_) | Value::Native(_) | Value::Promise(_)) => {
+            "[object]".to_owned()
+        }
     }
 }
 

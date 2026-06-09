@@ -1,14 +1,14 @@
 [package]
 name = "web-api-cat"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
-description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat). v0.4.0 installs `document.cookie` as a boa-cat 0.3 accessor pair: the getter reads a host-supplied projection, the setter records each `document.cookie = ...` RHS string (with attributes intact) into a hidden write log AND updates the visible projection so subsequent reads see the just-written cookie.  Hosts call `set_document_cookie` to seed the projection pre-eval and `read_cookie_writes(&heap)` to recover each per-write Set-Cookie-style string post-eval -- preserving `Max-Age` / `Path` / `Domain` / `Secure` / `HttpOnly` semantics across multiple writes in one script.  No mut, no Rc/Arc, no interior mutability, no panics. Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.5.0 bumps to boa-cat 0.6 + ecma-parse-cat 0.2 to track the async stack across the workspace: existing match arms gain `Value::Promise(_) => None` so DOM extraction skips engine-allocated promises, and the v0.4 `document.cookie` accessor pair continues to work unchanged on top of the new engine surface.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
 license = "MIT OR Apache-2.0"
 keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
 categories = ["web-programming"]
 
 [dependencies]
-boa-cat = "0.3"
+boa-cat = "0.6"
 html-cat = "0.1"
 net-cat = "0.1"
 dom-cat = "0.1"
@@ -16,7 +16,7 @@ dom-cat = "0.1"
 [dev-dependencies]
 proptest = "1"
 ecma-lex-cat = "0.1"
-ecma-parse-cat = "0.1"
+ecma-parse-cat = "0.2"
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }

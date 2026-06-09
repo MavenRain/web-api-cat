@@ -50,7 +50,8 @@ fn object_id_of(value: &Value) -> Option<ObjectId> {
         | Value::Number(_)
         | Value::String(_)
         | Value::Function(_)
-        | Value::Native(_) => None,
+        | Value::Native(_)
+        | Value::Promise(_) => None,
     }
 }
 
