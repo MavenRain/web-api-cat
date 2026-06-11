@@ -1,5 +1,8 @@
 //! `Element`-side native methods: `getAttribute`, `setAttribute`,
-//! `hasAttribute`, `querySelector`.
+//! `hasAttribute`, `querySelector`, plus the v0.6.1 / v0.6.2 / v0.6.3
+//! structural and class-list mutators (`appendChild`, `removeChild`,
+//! `insertBefore`, `classList.add`, `classList.remove`,
+//! `classList.contains`, `classList.toggle`).
 //!
 //! Element objects are boa-cat [`Object`]s carrying these properties:
 //!
@@ -502,4 +505,147 @@ fn insert_before_into_parent(this: &Value, new_node: &Value, ref_node: &Value, h
         heap.store_object(children_id, new_children)
             .unwrap_or_else(|h| h)
     }
+}
+
+/// `Element.classList.add(token)` (v0.6.3): if `token` isn't
+/// already among the parent element's class tokens, append it and
+/// write the rejoined token list back through `setAttribute`-style
+/// mirroring (so both `className` and `__attributes.class` stay in
+/// sync; `getAttribute('class')` keeps working).  No-ops if `this`
+/// isn't a `classList` Object or its `__element__` backref is
+/// missing / non-Object.
+///
+/// # Errors
+///
+/// Never returns `Err`; bad inputs no-op.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn class_list_add_impl(args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
+    let token = string_arg(&args, 0);
+    let new_heap = add_class_token(&this, &token, heap);
+    Ok((Outcome::Normal(Value::Undefined), new_heap, fuel))
+}
+
+/// `Element.classList.remove(token)` (v0.6.3): drop every
+/// occurrence of `token` from the parent element's class list and
+/// write the rejoined token list back through `setAttribute`-style
+/// mirroring.  No-ops if `this` isn't a `classList` Object.
+///
+/// # Errors
+///
+/// Never returns `Err`; bad inputs no-op.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn class_list_remove_impl(args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
+    let token = string_arg(&args, 0);
+    let new_heap = remove_class_token(&this, &token, heap);
+    Ok((Outcome::Normal(Value::Undefined), new_heap, fuel))
+}
+
+/// `Element.classList.contains(token)` (v0.6.3): return `true` iff
+/// `token` is among the parent element's whitespace-separated class
+/// tokens.  Returns `false` if `this` isn't a `classList` Object.
+///
+/// # Errors
+///
+/// Never returns `Err`.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn class_list_contains_impl(
+    args: Vec<Value>,
+    this: Value,
+    heap: Heap,
+    fuel: Fuel,
+) -> EvalResult {
+    let token = string_arg(&args, 0);
+    let present = element_of_class_list(&this, &heap)
+        .is_some_and(|(_, element)| class_list_tokens(&element).iter().any(|t| t == &token));
+    Ok((Outcome::Normal(Value::Boolean(present)), heap, fuel))
+}
+
+/// `Element.classList.toggle(token)` (v0.6.3): remove `token` if it
+/// was already present, otherwise add it; return the new
+/// presence-state (matches MDN: `true` after add, `false` after
+/// remove).  No-ops (returning `false`) if `this` isn't a
+/// `classList` Object.
+///
+/// # Errors
+///
+/// Never returns `Err`.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn class_list_toggle_impl(args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
+    let token = string_arg(&args, 0);
+    let (present, new_heap) = toggle_class_token(&this, &token, heap);
+    Ok((Outcome::Normal(Value::Boolean(present)), new_heap, fuel))
+}
+
+fn element_of_class_list(this: &Value, heap: &Heap) -> Option<(ObjectId, Object)> {
+    let list_id = object_id_of(this)?;
+    let list = heap.object(list_id)?;
+    let element_id = list.get("__element__").and_then(|v| match v {
+        Value::Object(id) => Some(*id),
+        Value::Undefined
+        | Value::Null
+        | Value::Boolean(_)
+        | Value::Number(_)
+        | Value::String(_)
+        | Value::Function(_)
+        | Value::Native(_)
+        | Value::Promise(_) => None,
+    })?;
+    let element = heap.object(element_id)?.clone();
+    Some((element_id, element))
+}
+
+fn class_list_tokens(element: &Object) -> Vec<String> {
+    match element.get("className") {
+        Some(Value::String(s)) => s.split_ascii_whitespace().map(str::to_owned).collect(),
+        Some(_) | None => Vec::new(),
+    }
+}
+
+fn add_class_token(this: &Value, token: &str, heap: Heap) -> Heap {
+    let Some((element_id, element)) = element_of_class_list(this, &heap) else {
+        return heap;
+    };
+    let tokens = class_list_tokens(&element);
+    let new_tokens: Vec<String> = if tokens.iter().any(|t| t == token) {
+        tokens
+    } else {
+        tokens
+            .into_iter()
+            .chain(std::iter::once(token.to_owned()))
+            .collect()
+    };
+    let new_class = new_tokens.join(" ");
+    let element_value = Value::Object(element_id);
+    write_attribute(&element_value, "class", &new_class, heap)
+}
+
+fn remove_class_token(this: &Value, token: &str, heap: Heap) -> Heap {
+    let Some((element_id, element)) = element_of_class_list(this, &heap) else {
+        return heap;
+    };
+    let tokens = class_list_tokens(&element);
+    let new_tokens: Vec<String> = tokens.into_iter().filter(|t| t != token).collect();
+    let new_class = new_tokens.join(" ");
+    let element_value = Value::Object(element_id);
+    write_attribute(&element_value, "class", &new_class, heap)
+}
+
+fn toggle_class_token(this: &Value, token: &str, heap: Heap) -> (bool, Heap) {
+    let Some((element_id, element)) = element_of_class_list(this, &heap) else {
+        return (false, heap);
+    };
+    let tokens = class_list_tokens(&element);
+    let was_present = tokens.iter().any(|t| t == token);
+    let new_tokens: Vec<String> = if was_present {
+        tokens.into_iter().filter(|t| t != token).collect()
+    } else {
+        tokens
+            .into_iter()
+            .chain(std::iter::once(token.to_owned()))
+            .collect()
+    };
+    let new_class = new_tokens.join(" ");
+    let element_value = Value::Object(element_id);
+    let new_heap = write_attribute(&element_value, "class", &new_class, heap);
+    (!was_present, new_heap)
 }

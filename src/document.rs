@@ -119,6 +119,45 @@ pub fn build_blank_element(tag: &str, heap: Heap) -> (Value, Heap) {
         Value::Native(element::insert_before_impl),
     );
     let (id, heap) = heap.alloc_object(Object::from_properties(props));
+    let heap = install_class_list(id, heap);
+    (Value::Object(id), heap)
+}
+
+/// v0.6.3 helper: allocate a `classList` Object holding an
+/// `__element__` backref to `element_id` and the four
+/// `DOMTokenList` natives (`add`, `remove`, `contains`, `toggle`),
+/// then attach it as `classList` on the element via
+/// `store_object`.  Run after the element itself is allocated so
+/// the backref can be materialised.
+fn install_class_list(element_id: ObjectId, heap: Heap) -> Heap {
+    let (class_list_value, heap) = build_class_list_object(element_id, heap);
+    let Some(element) = heap.object(element_id).cloned() else {
+        return heap;
+    };
+    let updated = element.with("classList".to_owned(), class_list_value);
+    heap.store_object(element_id, updated).unwrap_or_else(|h| h)
+}
+
+fn build_class_list_object(element_id: ObjectId, heap: Heap) -> (Value, Heap) {
+    let mut props = BTreeMap::new();
+    let _ = props.insert("__element__".to_owned(), Value::Object(element_id));
+    let _ = props.insert(
+        "add".to_owned(),
+        Value::Native(element::class_list_add_impl),
+    );
+    let _ = props.insert(
+        "remove".to_owned(),
+        Value::Native(element::class_list_remove_impl),
+    );
+    let _ = props.insert(
+        "contains".to_owned(),
+        Value::Native(element::class_list_contains_impl),
+    );
+    let _ = props.insert(
+        "toggle".to_owned(),
+        Value::Native(element::class_list_toggle_impl),
+    );
+    let (id, heap) = heap.alloc_object(Object::from_properties(props));
     (Value::Object(id), heap)
 }
 
@@ -215,6 +254,7 @@ fn build_element(html_element: &HtmlElement, heap: Heap) -> (Value, Heap) {
         Value::Native(element::insert_before_impl),
     );
     let (id, heap) = heap.alloc_object(Object::from_properties(props));
+    let heap = install_class_list(id, heap);
     (Value::Object(id), heap)
 }
 
