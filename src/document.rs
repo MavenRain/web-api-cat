@@ -90,6 +90,8 @@ pub fn build_blank_element(tag: &str, heap: Heap) -> (Value, Heap) {
     let _ = props.insert("textContent".to_owned(), Value::String(String::new()));
     let _ = props.insert("children".to_owned(), children_array_value);
     let _ = props.insert("__attributes".to_owned(), attributes_value);
+    let (style_value, heap) = build_empty_style_object(heap);
+    let _ = props.insert("style".to_owned(), style_value);
     let _ = props.insert(
         "getAttribute".to_owned(),
         Value::Native(element::get_attribute_impl),
@@ -120,6 +122,20 @@ pub fn build_blank_element(tag: &str, heap: Heap) -> (Value, Heap) {
     );
     let (id, heap) = heap.alloc_object(Object::from_properties(props));
     let heap = install_class_list(id, heap);
+    (Value::Object(id), heap)
+}
+
+/// v0.6.4 helper: allocate a fresh empty Object to attach as
+/// `element.style`.  Scripts read and write arbitrary keys
+/// (`el.style.color = 'red'`) and the engine's normal property
+/// storage handles the round-trip; no special methods needed.  The
+/// inline `style="..."` attribute on parsed HTML is NOT parsed
+/// into this object (it stays readable via `getAttribute('style')`);
+/// real-world `CSSStyleDeclaration` parsing is deferred.  Back-prop
+/// from this object into layout-cat is also deferred -- this v0
+/// chunk targets script-compatibility, not visual styling.
+fn build_empty_style_object(heap: Heap) -> (Value, Heap) {
+    let (id, heap) = heap.alloc_object(Object::from_properties(BTreeMap::new()));
     (Value::Object(id), heap)
 }
 
@@ -225,6 +241,8 @@ fn build_element(html_element: &HtmlElement, heap: Heap) -> (Value, Heap) {
     let _ = props.insert("textContent".to_owned(), Value::String(text_content));
     let _ = props.insert("children".to_owned(), children_array_value);
     let _ = props.insert("__attributes".to_owned(), attributes_value);
+    let (style_value, heap) = build_empty_style_object(heap);
+    let _ = props.insert("style".to_owned(), style_value);
     let _ = props.insert(
         "getAttribute".to_owned(),
         Value::Native(element::get_attribute_impl),

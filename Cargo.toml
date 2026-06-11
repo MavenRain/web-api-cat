@@ -1,8 +1,8 @@
 [package]
 name = "web-api-cat"
-version = "0.6.3"
+version = "0.6.4"
 edition = "2024"
-description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.6.3 adds `Element.classList` as a `DOMTokenList`-shaped object exposing `add(token)`, `remove(token)`, `contains(token)`, and `toggle(token)`.  All writebacks flow through the existing `setAttribute('class', ...)` mirror path so `className`, `getAttribute('class')`, and `__attributes.class` stay in sync.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.6.4 adds `Element.style` as a fresh empty Object on each element, so common script patterns like `el.style.color = 'red'` and `el.style.display = 'none'` round-trip through the engine's normal property storage without throwing.  Inline `style=\"...\"` attribute parsing and back-prop into layout-cat are deferred; the goal here is script compatibility.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
 license = "MIT OR Apache-2.0"
 keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
 categories = ["web-programming"]
