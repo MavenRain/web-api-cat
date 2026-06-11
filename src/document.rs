@@ -110,6 +110,14 @@ pub fn build_blank_element(tag: &str, heap: Heap) -> (Value, Heap) {
         "appendChild".to_owned(),
         Value::Native(element::append_child_impl),
     );
+    let _ = props.insert(
+        "removeChild".to_owned(),
+        Value::Native(element::remove_child_impl),
+    );
+    let _ = props.insert(
+        "insertBefore".to_owned(),
+        Value::Native(element::insert_before_impl),
+    );
     let (id, heap) = heap.alloc_object(Object::from_properties(props));
     (Value::Object(id), heap)
 }
@@ -197,6 +205,14 @@ fn build_element(html_element: &HtmlElement, heap: Heap) -> (Value, Heap) {
     let _ = props.insert(
         "appendChild".to_owned(),
         Value::Native(element::append_child_impl),
+    );
+    let _ = props.insert(
+        "removeChild".to_owned(),
+        Value::Native(element::remove_child_impl),
+    );
+    let _ = props.insert(
+        "insertBefore".to_owned(),
+        Value::Native(element::insert_before_impl),
     );
     let (id, heap) = heap.alloc_object(Object::from_properties(props));
     (Value::Object(id), heap)

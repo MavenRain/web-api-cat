@@ -351,34 +351,8 @@ pub fn append_child_impl(args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel) 
 }
 
 fn append_child_to_parent(this: &Value, child: &Value, heap: Heap) -> Heap {
-    let parent_id_opt = object_id_of(this);
-    let children_id_opt = parent_id_opt
-        .and_then(|id| heap.object(id))
-        .and_then(|obj| obj.get("children").cloned())
-        .and_then(|v| match v {
-            Value::Object(id) => Some(id),
-            Value::Undefined
-            | Value::Null
-            | Value::Boolean(_)
-            | Value::Number(_)
-            | Value::String(_)
-            | Value::Function(_)
-            | Value::Native(_)
-            | Value::Promise(_) => None,
-        });
-    let children_obj_opt = children_id_opt.and_then(|id| heap.object(id).cloned());
-    // `if let` not `match` here: borrow checker won't let
-    // map_or_else move `heap` into one closure when the other
-    // also captures it for the default-branch clone.
-    if let (Some(children_id), Some(children_obj)) = (children_id_opt, children_obj_opt) {
-        let length = match children_obj.get("length") {
-            Some(Value::Number(n)) if n.is_finite() && *n >= 0.0 => {
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                let len = *n as u32;
-                len
-            }
-            Some(_) | None => 0,
-        };
+    if let Some((children_id, children_obj)) = children_object_of(this, &heap) {
+        let length = array_length(&children_obj);
         let updated_children = children_obj
             .with(format!("{length}"), child.clone())
             .with("length".to_owned(), Value::Number(f64::from(length + 1)));
@@ -386,5 +360,146 @@ fn append_child_to_parent(this: &Value, child: &Value, heap: Heap) -> Heap {
             .unwrap_or_else(|h| h)
     } else {
         heap
+    }
+}
+
+fn children_object_of(this: &Value, heap: &Heap) -> Option<(ObjectId, Object)> {
+    let parent_id = object_id_of(this)?;
+    let parent = heap.object(parent_id)?;
+    let children_id = parent.get("children").and_then(|v| match v {
+        Value::Object(id) => Some(*id),
+        Value::Undefined
+        | Value::Null
+        | Value::Boolean(_)
+        | Value::Number(_)
+        | Value::String(_)
+        | Value::Function(_)
+        | Value::Native(_)
+        | Value::Promise(_) => None,
+    })?;
+    let children_obj = heap.object(children_id)?.clone();
+    Some((children_id, children_obj))
+}
+
+/// `Element.removeChild(child)` (v0.6.2): remove `child` from
+/// `this.children` and return it.  Remaining children shift down
+/// to fill the freed slot; `length` decrements.  No-ops (and still
+/// returns the requested `child`) when `this` or `child` aren't
+/// Object values, the children-array slot is missing / non-object,
+/// or `child` isn't currently a child of `this` (the DOM spec
+/// throws `NotFoundError` here; this scoped impl no-ops to stay
+/// inside the always-`Ok` `NativeFn` contract).
+///
+/// # Errors
+///
+/// Never returns `Err`; bad inputs no-op.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn remove_child_impl(args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
+    let child = args.first().cloned().unwrap_or(Value::Undefined);
+    let outcome_heap = remove_child_from_parent(&this, &child, heap);
+    Ok((Outcome::Normal(child), outcome_heap, fuel))
+}
+
+fn remove_child_from_parent(this: &Value, child: &Value, heap: Heap) -> Heap {
+    let Some((children_id, children_obj)) = children_object_of(this, &heap) else {
+        return heap;
+    };
+    let Some(child_id) = object_id_of(child) else {
+        return heap;
+    };
+    let length = array_length(&children_obj);
+    let Some(removal_index) = (0..length)
+        .find(|i| children_obj.get(&format!("{i}")).and_then(object_id_of) == Some(child_id))
+    else {
+        return heap;
+    };
+    let new_length = length.saturating_sub(1);
+    let pairs: BTreeMap<String, Value> = (0..length)
+        .filter(|i| *i != removal_index)
+        .enumerate()
+        .map(|(new_idx, old_idx)| {
+            let value = children_obj
+                .get(&format!("{old_idx}"))
+                .cloned()
+                .unwrap_or(Value::Null);
+            (format!("{new_idx}"), value)
+        })
+        .chain(std::iter::once((
+            "length".to_owned(),
+            Value::Number(f64::from(new_length)),
+        )))
+        .collect();
+    let new_children = Object::from_properties(pairs);
+    heap.store_object(children_id, new_children)
+        .unwrap_or_else(|h| h)
+}
+
+/// `Element.insertBefore(newNode, referenceNode)` (v0.6.2): insert
+/// `newNode` into `this.children` immediately before
+/// `referenceNode`, returning `newNode`.  Existing children at and
+/// after `referenceNode`'s slot shift up; `length` increments.  If
+/// `referenceNode` is `null` / `undefined` / any non-Object value
+/// the call falls through to `appendChild`-like end-of-list
+/// behaviour (matching the DOM spec's `null` case).  No-ops if
+/// `this` isn't an Object, the children-array slot is missing /
+/// non-object, or `referenceNode` is a real Object but isn't
+/// actually a child of `this` (the DOM spec throws
+/// `NotFoundError`; this scoped impl no-ops).
+///
+/// # Errors
+///
+/// Never returns `Err`; bad inputs yield `Value::Undefined`.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn insert_before_impl(args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
+    let new_node = args.first().cloned().unwrap_or(Value::Undefined);
+    let ref_node = args.get(1).cloned().unwrap_or(Value::Null);
+    let outcome_heap = insert_before_into_parent(&this, &new_node, &ref_node, heap);
+    Ok((Outcome::Normal(new_node), outcome_heap, fuel))
+}
+
+fn insert_before_into_parent(this: &Value, new_node: &Value, ref_node: &Value, heap: Heap) -> Heap {
+    let ref_id_opt = object_id_of(ref_node);
+    if ref_id_opt.is_none() {
+        append_child_to_parent(this, new_node, heap)
+    } else {
+        let Some((children_id, children_obj)) = children_object_of(this, &heap) else {
+            return heap;
+        };
+        let Some(ref_id) = ref_id_opt else {
+            return heap;
+        };
+        let length = array_length(&children_obj);
+        let Some(insert_index) = (0..length)
+            .find(|i| children_obj.get(&format!("{i}")).and_then(object_id_of) == Some(ref_id))
+        else {
+            return heap;
+        };
+        let new_length = length + 1;
+        let pairs: BTreeMap<String, Value> = (0..new_length)
+            .map(|new_idx| {
+                let value = match new_idx.cmp(&insert_index) {
+                    std::cmp::Ordering::Less => children_obj
+                        .get(&format!("{new_idx}"))
+                        .cloned()
+                        .unwrap_or(Value::Null),
+                    std::cmp::Ordering::Equal => new_node.clone(),
+                    std::cmp::Ordering::Greater => {
+                        let old_idx = new_idx - 1;
+                        children_obj
+                            .get(&format!("{old_idx}"))
+                            .cloned()
+                            .unwrap_or(Value::Null)
+                    }
+                };
+                (format!("{new_idx}"), value)
+            })
+            .chain(std::iter::once((
+                "length".to_owned(),
+                Value::Number(f64::from(new_length)),
+            )))
+            .collect();
+        let new_children = Object::from_properties(pairs);
+        heap.store_object(children_id, new_children)
+            .unwrap_or_else(|h| h)
     }
 }

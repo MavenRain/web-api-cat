@@ -1,4 +1,5 @@
-//! `document.createElement` + `Element.appendChild` (v0.6.1).
+//! `document.createElement` + `Element.appendChild` (v0.6.1),
+//! `Element.removeChild` + `Element.insertBefore` (v0.6.2).
 
 use boa_cat::env::Env;
 use boa_cat::evaluate_program_with;
@@ -123,4 +124,119 @@ fn append_child_preserves_existing_children() -> Result<(), Error> {
     matches!(value, Value::Number(n) if (n - 2.0).abs() < 1e-9)
         .then_some(())
         .ok_or_else(|| fail("expected children.length === 2 (kept existing + appended)"))
+}
+
+#[test]
+fn remove_child_decrements_children_length() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='host'><p id='first'>x</p><span id='second'>y</span></div></body></html>",
+        "const host = document.getElementById('host');
+        const first = document.getElementById('first');
+        host.removeChild(first);
+        host.children.length",
+    )?;
+    matches!(value, Value::Number(n) if (n - 1.0).abs() < 1e-9)
+        .then_some(())
+        .ok_or_else(|| fail("expected children.length === 1 after removeChild"))
+}
+
+#[test]
+fn remove_child_returns_removed_child() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='host'><p id='first'>x</p></div></body></html>",
+        "const host = document.getElementById('host');
+        const first = document.getElementById('first');
+        host.removeChild(first).tagName",
+    )?;
+    matches!(value, Value::String(ref s) if s == "p")
+        .then_some(())
+        .ok_or_else(|| fail("expected removeChild to return the removed child"))
+}
+
+#[test]
+fn remove_child_shifts_remaining_children_down() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='host'><p id='first'>x</p><span id='second'>y</span><a id='third'>z</a></div></body></html>",
+        "const host = document.getElementById('host');
+        const second = document.getElementById('second');
+        host.removeChild(second);
+        host.children[0].tagName + host.children[1].tagName",
+    )?;
+    matches!(value, Value::String(ref s) if s == "pa")
+        .then_some(())
+        .ok_or_else(|| fail("expected children to shift to [p, a] after removing middle span"))
+}
+
+#[test]
+fn remove_child_noop_on_non_child() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='host'><p id='first'>x</p></div></body></html>",
+        "const host = document.getElementById('host');
+        const stranger = document.createElement('span');
+        host.removeChild(stranger);
+        host.children.length",
+    )?;
+    matches!(value, Value::Number(n) if (n - 1.0).abs() < 1e-9)
+        .then_some(())
+        .ok_or_else(|| {
+            fail("expected children.length === 1 (no-op when child is not actually a child)")
+        })
+}
+
+#[test]
+fn insert_before_null_reference_appends() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='host'><p id='first'>x</p></div></body></html>",
+        "const host = document.getElementById('host');
+        host.insertBefore(document.createElement('span'), null);
+        host.children[1].tagName",
+    )?;
+    matches!(value, Value::String(ref s) if s == "span")
+        .then_some(())
+        .ok_or_else(|| fail("expected insertBefore(_, null) to append at end"))
+}
+
+#[test]
+fn insert_before_returns_new_node() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='host'><p id='ref'>x</p></div></body></html>",
+        "const host = document.getElementById('host');
+        const ref_ = document.getElementById('ref');
+        host.insertBefore(document.createElement('span'), ref_).tagName",
+    )?;
+    matches!(value, Value::String(ref s) if s == "span")
+        .then_some(())
+        .ok_or_else(|| fail("expected insertBefore to return the inserted node"))
+}
+
+#[test]
+fn insert_before_places_node_at_reference_index() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='host'><p id='first'>x</p><a id='second'>y</a></div></body></html>",
+        "const host = document.getElementById('host');
+        const second = document.getElementById('second');
+        host.insertBefore(document.createElement('span'), second);
+        host.children[0].tagName + host.children[1].tagName + host.children[2].tagName",
+    )?;
+    matches!(value, Value::String(ref s) if s == "pspana")
+        .then_some(())
+        .ok_or_else(|| {
+            fail("expected children to become [p, span, a] after insertBefore at index 1")
+        })
+}
+
+#[test]
+fn insert_before_at_first_position_shifts_all_children_up() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='host'><p id='first'>x</p><a id='second'>y</a></div></body></html>",
+        "const host = document.getElementById('host');
+        const first = document.getElementById('first');
+        host.insertBefore(document.createElement('span'), first);
+        host.children[0].tagName + host.children[1].tagName + host.children[2].tagName",
+    )?;
+    matches!(value, Value::String(ref s) if s == "spanpa")
+        .then_some(())
+        .ok_or_else(|| {
+            fail("expected children to become [span, p, a] after insertBefore at index 0")
+        })
 }
