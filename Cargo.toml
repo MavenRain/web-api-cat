@@ -1,8 +1,8 @@
 [package]
 name = "web-api-cat"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
-description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.6.0 bumps to boa-cat 0.7 + ecma-parse-cat 0.3 so the v0.4 `document.cookie` accessor pair and the v0.5 `Value::Promise(_)` arms compose with user-supplied scripts using natural async syntax (`async () => body`, `async function foo() { ... }`, and reserved-word member access like `obj.catch(cb)`).  No source change.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.6.1 opens DOM mutation: `document.createElement(tag)` allocates a fresh element-shaped Object with the requested tagName and empty fields; `Element.appendChild(child)` mutates the children array in-place and returns the appended child.  Both compose with the existing `extract_document` back-prop so newly-created and newly-appended nodes reach layout / paint on the next eval pass.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
 license = "MIT OR Apache-2.0"
 keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
 categories = ["web-programming"]

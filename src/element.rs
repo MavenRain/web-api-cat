@@ -324,3 +324,67 @@ pub fn find_by_id(root: ObjectId, id: &str, heap: &Heap) -> Option<Value> {
     };
     walk_descendants(root, &pattern, heap)
 }
+
+/// `Element.appendChild(child)` (v0.6.1): append `child` to
+/// `this.children`, updating `length`.  Returns `child` per spec
+/// so the caller can chain.  No-ops when `this` or `child` aren't
+/// Object values, or when the children-array slot is missing /
+/// non-object.
+///
+/// Mutation flow: clone the children array Object, write the new
+/// numeric-key entry, write `length`, then `store_object` both the
+/// children Object and the parent (the parent's `children` slot
+/// already points at the same children-array `ObjectId`, so the
+/// parent update is implicit -- only the children Object's
+/// in-place mutation matters).  `extract_document` walks
+/// `children` numerically in the next back-prop pass, so the new
+/// child reaches layout / paint automatically.
+///
+/// # Errors
+///
+/// Never returns `Err`; bad inputs yield `Value::Undefined`.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn append_child_impl(args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
+    let child = args.first().cloned().unwrap_or(Value::Undefined);
+    let outcome_heap = append_child_to_parent(&this, &child, heap);
+    Ok((Outcome::Normal(child), outcome_heap, fuel))
+}
+
+fn append_child_to_parent(this: &Value, child: &Value, heap: Heap) -> Heap {
+    let parent_id_opt = object_id_of(this);
+    let children_id_opt = parent_id_opt
+        .and_then(|id| heap.object(id))
+        .and_then(|obj| obj.get("children").cloned())
+        .and_then(|v| match v {
+            Value::Object(id) => Some(id),
+            Value::Undefined
+            | Value::Null
+            | Value::Boolean(_)
+            | Value::Number(_)
+            | Value::String(_)
+            | Value::Function(_)
+            | Value::Native(_)
+            | Value::Promise(_) => None,
+        });
+    let children_obj_opt = children_id_opt.and_then(|id| heap.object(id).cloned());
+    // `if let` not `match` here: borrow checker won't let
+    // map_or_else move `heap` into one closure when the other
+    // also captures it for the default-branch clone.
+    if let (Some(children_id), Some(children_obj)) = (children_id_opt, children_obj_opt) {
+        let length = match children_obj.get("length") {
+            Some(Value::Number(n)) if n.is_finite() && *n >= 0.0 => {
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let len = *n as u32;
+                len
+            }
+            Some(_) | None => 0,
+        };
+        let updated_children = children_obj
+            .with(format!("{length}"), child.clone())
+            .with("length".to_owned(), Value::Number(f64::from(length + 1)));
+        heap.store_object(children_id, updated_children)
+            .unwrap_or_else(|h| h)
+    } else {
+        heap
+    }
+}

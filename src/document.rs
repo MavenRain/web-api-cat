@@ -35,10 +35,83 @@ fn build_document_object(root_value: Value, heap: Heap) -> (Value, Value, Heap) 
         "querySelector".to_owned(),
         Value::Native(document_query_selector_impl),
     );
+    let _ = props.insert(
+        "createElement".to_owned(),
+        Value::Native(create_element_impl),
+    );
     let (doc_id, heap) = heap.alloc_object(Object::from_properties(props));
     let doc_value = Value::Object(doc_id);
     let heap = crate::cookie::install_cookie_accessor(&doc_value, heap);
     (doc_value, root_value, heap)
+}
+
+/// `document.createElement(tagName)` (v0.6.1): allocate a fresh
+/// element-shaped object on the heap.  The new element has the
+/// requested `tagName`, empty `id` / `className` / `textContent`,
+/// an empty children array, an empty `__attributes` object, and
+/// every method binding a build-time element carries (so the
+/// caller can chain `setAttribute`, `appendChild`, etc. straight
+/// away).
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+fn create_element_impl(args: Vec<Value>, _this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
+    let tag = match args.first() {
+        Some(Value::String(s)) => s.clone(),
+        Some(
+            Value::Undefined
+            | Value::Null
+            | Value::Boolean(_)
+            | Value::Number(_)
+            | Value::Object(_)
+            | Value::Function(_)
+            | Value::Native(_)
+            | Value::Promise(_),
+        )
+        | None => String::new(),
+    };
+    let (element, heap) = build_blank_element(&tag, heap);
+    Ok((Outcome::Normal(element), heap, fuel))
+}
+
+/// v0.6.1 helper: build an element with the supplied tagName but
+/// otherwise-empty fields.  Used by both `createElement` and the
+/// `appendChild` test setup; the rendered fields match what
+/// [`build_element`] produces for an HTML-parsed element so
+/// [`crate::extract::extract_document`] picks the new node up on
+/// the next back-prop pass.
+#[must_use]
+pub fn build_blank_element(tag: &str, heap: Heap) -> (Value, Heap) {
+    let attribute_pairs: Vec<(String, String)> = Vec::new();
+    let (attributes_value, heap) = element::build_attributes_object(&attribute_pairs, heap);
+    let (children_array_value, heap) = build_array_object(&[], heap);
+    let mut props = BTreeMap::new();
+    let _ = props.insert("tagName".to_owned(), Value::String(tag.to_owned()));
+    let _ = props.insert("id".to_owned(), Value::String(String::new()));
+    let _ = props.insert("className".to_owned(), Value::String(String::new()));
+    let _ = props.insert("textContent".to_owned(), Value::String(String::new()));
+    let _ = props.insert("children".to_owned(), children_array_value);
+    let _ = props.insert("__attributes".to_owned(), attributes_value);
+    let _ = props.insert(
+        "getAttribute".to_owned(),
+        Value::Native(element::get_attribute_impl),
+    );
+    let _ = props.insert(
+        "setAttribute".to_owned(),
+        Value::Native(element::set_attribute_impl),
+    );
+    let _ = props.insert(
+        "hasAttribute".to_owned(),
+        Value::Native(element::has_attribute_impl),
+    );
+    let _ = props.insert(
+        "querySelector".to_owned(),
+        Value::Native(element::query_selector_impl),
+    );
+    let _ = props.insert(
+        "appendChild".to_owned(),
+        Value::Native(element::append_child_impl),
+    );
+    let (id, heap) = heap.alloc_object(Object::from_properties(props));
+    (Value::Object(id), heap)
 }
 
 fn object_id_of(value: &Value) -> Option<ObjectId> {
@@ -120,6 +193,10 @@ fn build_element(html_element: &HtmlElement, heap: Heap) -> (Value, Heap) {
     let _ = props.insert(
         "querySelector".to_owned(),
         Value::Native(element::query_selector_impl),
+    );
+    let _ = props.insert(
+        "appendChild".to_owned(),
+        Value::Native(element::append_child_impl),
     );
     let (id, heap) = heap.alloc_object(Object::from_properties(props));
     (Value::Object(id), heap)
