@@ -26,6 +26,9 @@ use crate::document;
 /// Property key under which the `innerHTML` accessor pair lives.
 pub const PROPERTY_KEY: &str = "innerHTML";
 
+/// Property key under which the `outerHTML` accessor lives.
+pub const OUTER_PROPERTY_KEY: &str = "outerHTML";
+
 /// Install the v0.6.5 `innerHTML` accessor pair on `element_value`.
 /// Idempotent: re-running on the same object overwrites the
 /// previous accessor.  Called by
@@ -53,6 +56,46 @@ pub fn install_inner_html_accessor(element_value: &Value, heap: Heap) -> Heap {
 fn inner_html_getter_impl(_args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
     let html = serialize_inner(&this, &heap);
     Ok((Outcome::Normal(Value::String(html)), heap, fuel))
+}
+
+/// Install the v0.6.7 `outerHTML` accessor on `element_value`.
+/// The getter returns `<tag attrs>inner</tag>` -- the same
+/// serialisation `innerHTML` produces for a single element, but
+/// including the element's own opening and closing tags.  The
+/// setter is currently a no-op: rewriting `outerHTML` requires
+/// locating the element's parent and splicing the parsed
+/// replacement into the parent's children array, but the JS-side
+/// DOM doesn't yet track parent backrefs.  Installing a no-op
+/// setter (rather than leaving the accessor read-only) means
+/// `el.outerHTML = "..."` runs without throwing, which is what
+/// real-world scripts that conditionally rewrite outerHTML expect.
+#[must_use]
+pub fn install_outer_html_accessor(element_value: &Value, heap: Heap) -> Heap {
+    let Some(element_id) = object_id_from_value(element_value) else {
+        return heap;
+    };
+    let Some(element) = heap.object(element_id).cloned() else {
+        return heap;
+    };
+    let accessor = AccessorPair::new(
+        Some(Value::Native(outer_html_getter_impl)),
+        Some(Value::Native(outer_html_setter_impl)),
+    );
+    let updated = element.with_accessor(OUTER_PROPERTY_KEY.to_owned(), accessor);
+    heap.store_object(element_id, updated).unwrap_or_else(|h| h)
+}
+
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+fn outer_html_getter_impl(_args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
+    let html = object_id_from_value(&this)
+        .map(|id| serialize_element(id, &heap))
+        .unwrap_or_default();
+    Ok((Outcome::Normal(Value::String(html)), heap, fuel))
+}
+
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+fn outer_html_setter_impl(_args: Vec<Value>, _this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
+    Ok((Outcome::Normal(Value::Undefined), heap, fuel))
 }
 
 #[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]

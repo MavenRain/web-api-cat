@@ -120,10 +120,15 @@ pub fn build_blank_element(tag: &str, heap: Heap) -> (Value, Heap) {
         "insertBefore".to_owned(),
         Value::Native(element::insert_before_impl),
     );
+    let _ = props.insert(
+        "replaceChild".to_owned(),
+        Value::Native(element::replace_child_impl),
+    );
     let _ = props.insert("cloneNode".to_owned(), Value::Native(clone_node_impl));
     let (id, heap) = heap.alloc_object(Object::from_properties(props));
     let heap = install_class_list(id, heap);
     let heap = crate::inner_html::install_inner_html_accessor(&Value::Object(id), heap);
+    let heap = crate::inner_html::install_outer_html_accessor(&Value::Object(id), heap);
     (Value::Object(id), heap)
 }
 
@@ -273,10 +278,15 @@ fn build_element(html_element: &HtmlElement, heap: Heap) -> (Value, Heap) {
         "insertBefore".to_owned(),
         Value::Native(element::insert_before_impl),
     );
+    let _ = props.insert(
+        "replaceChild".to_owned(),
+        Value::Native(element::replace_child_impl),
+    );
     let _ = props.insert("cloneNode".to_owned(), Value::Native(clone_node_impl));
     let (id, heap) = heap.alloc_object(Object::from_properties(props));
     let heap = install_class_list(id, heap);
     let heap = crate::inner_html::install_inner_html_accessor(&Value::Object(id), heap);
+    let heap = crate::inner_html::install_outer_html_accessor(&Value::Object(id), heap);
     (Value::Object(id), heap)
 }
 

@@ -1,8 +1,8 @@
 [package]
 name = "web-api-cat"
-version = "0.6.6"
+version = "0.6.7"
 edition = "2024"
-description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.6.6 adds `Element.cloneNode(deep)` -- shallow by default, recursive when `deep === true`.  The clone owns fresh `__attributes`, `style`, `children`, and `classList` (with backref retargeted to the new element id) plus a freshly-installed `innerHTML` accessor, so mutating the clone never bleeds back into the original.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.6.7 adds `Element.outerHTML` (getter wraps the existing innerHTML serialiser with the element's own tag; setter no-ops pending parent-backref infrastructure) and `Element.replaceChild(newChild, oldChild)` (in-place children-array swap, returns the old child, preserves length).  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
 license = "MIT OR Apache-2.0"
 keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
 categories = ["web-programming"]

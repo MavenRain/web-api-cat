@@ -507,6 +507,45 @@ fn insert_before_into_parent(this: &Value, new_node: &Value, ref_node: &Value, h
     }
 }
 
+/// `Element.replaceChild(newChild, oldChild)` (v0.6.7): swap
+/// `oldChild` for `newChild` in `this.children`.  Length is
+/// preserved (one slot in, one slot out); the surrounding
+/// children stay at their indexes.  Returns `oldChild` per spec.
+/// No-ops (and still returns the requested `oldChild`) when
+/// `this` isn't an Object, the children-array slot is missing /
+/// non-object, `oldChild` isn't an Object, or `oldChild` isn't
+/// currently a child of `this` (the DOM spec throws
+/// `NotFoundError`; this scoped impl no-ops).
+///
+/// # Errors
+///
+/// Never returns `Err`; bad inputs no-op.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn replace_child_impl(args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
+    let new_child = args.first().cloned().unwrap_or(Value::Undefined);
+    let old_child = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let outcome_heap = replace_child_in_parent(&this, &new_child, &old_child, heap);
+    Ok((Outcome::Normal(old_child), outcome_heap, fuel))
+}
+
+fn replace_child_in_parent(this: &Value, new_child: &Value, old_child: &Value, heap: Heap) -> Heap {
+    let Some((children_id, children_obj)) = children_object_of(this, &heap) else {
+        return heap;
+    };
+    let Some(old_id) = object_id_of(old_child) else {
+        return heap;
+    };
+    let length = array_length(&children_obj);
+    let Some(replace_index) = (0..length)
+        .find(|i| children_obj.get(&format!("{i}")).and_then(object_id_of) == Some(old_id))
+    else {
+        return heap;
+    };
+    let updated_children = children_obj.with(format!("{replace_index}"), new_child.clone());
+    heap.store_object(children_id, updated_children)
+        .unwrap_or_else(|h| h)
+}
+
 /// `Element.classList.add(token)` (v0.6.3): if `token` isn't
 /// already among the parent element's class tokens, append it and
 /// write the rejoined token list back through `setAttribute`-style
