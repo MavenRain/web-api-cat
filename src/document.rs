@@ -90,6 +90,7 @@ pub fn build_blank_element(tag: &str, heap: Heap) -> (Value, Heap) {
     let _ = props.insert("textContent".to_owned(), Value::String(String::new()));
     let _ = props.insert("children".to_owned(), children_array_value);
     let _ = props.insert("__attributes".to_owned(), attributes_value);
+    let _ = props.insert("__parent__".to_owned(), Value::Null);
     let (style_value, heap) = build_empty_style_object(heap);
     let _ = props.insert("style".to_owned(), style_value);
     let _ = props.insert(
@@ -125,11 +126,33 @@ pub fn build_blank_element(tag: &str, heap: Heap) -> (Value, Heap) {
         Value::Native(element::replace_child_impl),
     );
     let _ = props.insert("cloneNode".to_owned(), Value::Native(clone_node_impl));
+    let _ = props.insert("remove".to_owned(), Value::Native(element::remove_impl));
     let (id, heap) = heap.alloc_object(Object::from_properties(props));
     let heap = install_class_list(id, heap);
+    let heap = install_parent_accessors(id, heap);
     let heap = crate::inner_html::install_inner_html_accessor(&Value::Object(id), heap);
     let heap = crate::inner_html::install_outer_html_accessor(&Value::Object(id), heap);
     (Value::Object(id), heap)
+}
+
+/// v0.6.8 helper: install `parentElement` and `parentNode` as
+/// accessors with getters that read `this.__parent__`.  Same
+/// underlying `NativeFn` (`element::parent_getter_impl`) -- we
+/// don't yet distinguish elements from other node types, so both
+/// accessors produce identical results.  Setter is omitted; the
+/// engine reports the property as read-only.
+fn install_parent_accessors(element_id: ObjectId, heap: Heap) -> Heap {
+    let Some(element) = heap.object(element_id).cloned() else {
+        return heap;
+    };
+    let parent_element_pair =
+        boa_cat::value::AccessorPair::new(Some(Value::Native(element::parent_getter_impl)), None);
+    let parent_node_pair =
+        boa_cat::value::AccessorPair::new(Some(Value::Native(element::parent_getter_impl)), None);
+    let updated = element
+        .with_accessor("parentElement".to_owned(), parent_element_pair)
+        .with_accessor("parentNode".to_owned(), parent_node_pair);
+    heap.store_object(element_id, updated).unwrap_or_else(|h| h)
 }
 
 /// v0.6.4 helper: allocate a fresh empty Object to attach as
@@ -248,6 +271,7 @@ fn build_element(html_element: &HtmlElement, heap: Heap) -> (Value, Heap) {
     let _ = props.insert("textContent".to_owned(), Value::String(text_content));
     let _ = props.insert("children".to_owned(), children_array_value);
     let _ = props.insert("__attributes".to_owned(), attributes_value);
+    let _ = props.insert("__parent__".to_owned(), Value::Null);
     let (style_value, heap) = build_empty_style_object(heap);
     let _ = props.insert("style".to_owned(), style_value);
     let _ = props.insert(
@@ -283,8 +307,13 @@ fn build_element(html_element: &HtmlElement, heap: Heap) -> (Value, Heap) {
         Value::Native(element::replace_child_impl),
     );
     let _ = props.insert("cloneNode".to_owned(), Value::Native(clone_node_impl));
+    let _ = props.insert("remove".to_owned(), Value::Native(element::remove_impl));
     let (id, heap) = heap.alloc_object(Object::from_properties(props));
+    let heap = children_values.iter().fold(heap, |heap, child| {
+        element::set_parent_backref(child, id, heap)
+    });
     let heap = install_class_list(id, heap);
+    let heap = install_parent_accessors(id, heap);
     let heap = crate::inner_html::install_inner_html_accessor(&Value::Object(id), heap);
     let heap = crate::inner_html::install_outer_html_accessor(&Value::Object(id), heap);
     (Value::Object(id), heap)
@@ -346,7 +375,7 @@ fn clone_element(element_id: ObjectId, deep: bool, heap: Heap) -> (Value, Heap) 
         .filter(|(k, _)| {
             !matches!(
                 k.as_str(),
-                "__attributes" | "style" | "children" | "classList"
+                "__attributes" | "style" | "children" | "classList" | "__parent__"
             )
         })
         .map(|(k, v)| (k.clone(), v.clone()))
@@ -356,10 +385,16 @@ fn clone_element(element_id: ObjectId, deep: bool, heap: Heap) -> (Value, Heap) 
             "children".to_owned(),
             new_children_array_value,
         )))
+        .chain(std::iter::once(("__parent__".to_owned(), Value::Null)))
         .collect();
     let (new_element_id, heap) = heap.alloc_object(Object::from_properties(new_props));
+    let heap = new_children_values.iter().fold(heap, |heap, child| {
+        element::set_parent_backref(child, new_element_id, heap)
+    });
     let heap = install_class_list(new_element_id, heap);
+    let heap = install_parent_accessors(new_element_id, heap);
     let heap = crate::inner_html::install_inner_html_accessor(&Value::Object(new_element_id), heap);
+    let heap = crate::inner_html::install_outer_html_accessor(&Value::Object(new_element_id), heap);
     (Value::Object(new_element_id), heap)
 }
 

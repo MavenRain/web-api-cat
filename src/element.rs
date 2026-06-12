@@ -1,8 +1,15 @@
 //! `Element`-side native methods: `getAttribute`, `setAttribute`,
-//! `hasAttribute`, `querySelector`, plus the v0.6.1 / v0.6.2 / v0.6.3
-//! structural and class-list mutators (`appendChild`, `removeChild`,
-//! `insertBefore`, `classList.add`, `classList.remove`,
-//! `classList.contains`, `classList.toggle`).
+//! `hasAttribute`, `querySelector`, plus the v0.6.1 / v0.6.2 / v0.6.3 /
+//! v0.6.7 / v0.6.8 structural, class-list, and parent-tracking
+//! mutators (`appendChild`, `removeChild`, `insertBefore`,
+//! `replaceChild`, `classList.add`, `classList.remove`,
+//! `classList.contains`, `classList.toggle`, `remove`).
+//!
+//! v0.6.8 introduces a hidden `__parent__` slot on every element
+//! (`Value::Object(parent_id)` when attached, `Value::Null` when
+//! detached) and routes every structural mutator through
+//! `set_parent_backref` / `clear_parent_backref` so the slot
+//! stays in sync with the actual children-array membership.
 //!
 //! Element objects are boa-cat [`Object`]s carrying these properties:
 //!
@@ -354,16 +361,55 @@ pub fn append_child_impl(args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel) 
 }
 
 fn append_child_to_parent(this: &Value, child: &Value, heap: Heap) -> Heap {
+    let Some(parent_id) = object_id_of(this) else {
+        return heap;
+    };
     if let Some((children_id, children_obj)) = children_object_of(this, &heap) {
         let length = array_length(&children_obj);
         let updated_children = children_obj
             .with(format!("{length}"), child.clone())
             .with("length".to_owned(), Value::Number(f64::from(length + 1)));
-        heap.store_object(children_id, updated_children)
-            .unwrap_or_else(|h| h)
+        let heap = heap
+            .store_object(children_id, updated_children)
+            .unwrap_or_else(|h| h);
+        set_parent_backref(child, parent_id, heap)
     } else {
         heap
     }
+}
+
+/// v0.6.8 helper: set `child_value.__parent__` to
+/// `Value::Object(parent_id)`.  No-op when `child_value` isn't an
+/// Object or its heap slot is missing.  Called by every structural
+/// mutator and by `document::build_element` / `document::clone_element`
+/// to wire up parent backrefs.
+#[must_use]
+pub fn set_parent_backref(child_value: &Value, parent_id: ObjectId, heap: Heap) -> Heap {
+    let Some(child_id) = object_id_of(child_value) else {
+        return heap;
+    };
+    let Some(child_obj) = heap.object(child_id).cloned() else {
+        return heap;
+    };
+    let updated = child_obj.with("__parent__".to_owned(), Value::Object(parent_id));
+    heap.store_object(child_id, updated).unwrap_or_else(|h| h)
+}
+
+/// v0.6.8 helper: clear `child_value.__parent__` to `Value::Null`.
+/// No-op when `child_value` isn't an Object or its heap slot is
+/// missing.  Called when detaching a child from its parent
+/// (`removeChild`, `replaceChild`'s old-child slot, `remove`,
+/// `innerHTML` setter's discarded old children).
+#[must_use]
+pub fn clear_parent_backref(child_value: &Value, heap: Heap) -> Heap {
+    let Some(child_id) = object_id_of(child_value) else {
+        return heap;
+    };
+    let Some(child_obj) = heap.object(child_id).cloned() else {
+        return heap;
+    };
+    let updated = child_obj.with("__parent__".to_owned(), Value::Null);
+    heap.store_object(child_id, updated).unwrap_or_else(|h| h)
 }
 
 fn children_object_of(this: &Value, heap: &Heap) -> Option<(ObjectId, Object)> {
@@ -433,8 +479,10 @@ fn remove_child_from_parent(this: &Value, child: &Value, heap: Heap) -> Heap {
         )))
         .collect();
     let new_children = Object::from_properties(pairs);
-    heap.store_object(children_id, new_children)
-        .unwrap_or_else(|h| h)
+    let heap = heap
+        .store_object(children_id, new_children)
+        .unwrap_or_else(|h| h);
+    clear_parent_backref(child, heap)
 }
 
 /// `Element.insertBefore(newNode, referenceNode)` (v0.6.2): insert
@@ -465,6 +513,9 @@ fn insert_before_into_parent(this: &Value, new_node: &Value, ref_node: &Value, h
     if ref_id_opt.is_none() {
         append_child_to_parent(this, new_node, heap)
     } else {
+        let Some(parent_id) = object_id_of(this) else {
+            return heap;
+        };
         let Some((children_id, children_obj)) = children_object_of(this, &heap) else {
             return heap;
         };
@@ -502,8 +553,10 @@ fn insert_before_into_parent(this: &Value, new_node: &Value, ref_node: &Value, h
             )))
             .collect();
         let new_children = Object::from_properties(pairs);
-        heap.store_object(children_id, new_children)
-            .unwrap_or_else(|h| h)
+        let heap = heap
+            .store_object(children_id, new_children)
+            .unwrap_or_else(|h| h);
+        set_parent_backref(new_node, parent_id, heap)
     }
 }
 
@@ -529,6 +582,9 @@ pub fn replace_child_impl(args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel)
 }
 
 fn replace_child_in_parent(this: &Value, new_child: &Value, old_child: &Value, heap: Heap) -> Heap {
+    let Some(parent_id) = object_id_of(this) else {
+        return heap;
+    };
     let Some((children_id, children_obj)) = children_object_of(this, &heap) else {
         return heap;
     };
@@ -542,8 +598,61 @@ fn replace_child_in_parent(this: &Value, new_child: &Value, old_child: &Value, h
         return heap;
     };
     let updated_children = children_obj.with(format!("{replace_index}"), new_child.clone());
-    heap.store_object(children_id, updated_children)
-        .unwrap_or_else(|h| h)
+    let heap = heap
+        .store_object(children_id, updated_children)
+        .unwrap_or_else(|h| h);
+    let heap = set_parent_backref(new_child, parent_id, heap);
+    clear_parent_backref(old_child, heap)
+}
+
+/// `Element.remove()` (v0.6.8): detach `this` from its parent.
+/// Reads `this.__parent__`; if it's an Object, calls the same
+/// `remove_child_from_parent` helper that backs `removeChild`,
+/// which both excises `this` from the parent's children-array
+/// Object and clears `this.__parent__`.  No-op when `this` has no
+/// parent (already detached, or it's the document root).
+///
+/// # Errors
+///
+/// Never returns `Err`.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn remove_impl(_args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
+    let parent_value = parent_value_of(&this, &heap);
+    let outcome_heap = match parent_value {
+        Value::Object(_) => remove_child_from_parent(&parent_value, &this, heap),
+        Value::Undefined
+        | Value::Null
+        | Value::Boolean(_)
+        | Value::Number(_)
+        | Value::String(_)
+        | Value::Function(_)
+        | Value::Native(_)
+        | Value::Promise(_) => heap,
+    };
+    Ok((Outcome::Normal(Value::Undefined), outcome_heap, fuel))
+}
+
+fn parent_value_of(this: &Value, heap: &Heap) -> Value {
+    object_id_of(this)
+        .and_then(|id| heap.object(id))
+        .and_then(|obj| obj.get("__parent__").cloned())
+        .unwrap_or(Value::Null)
+}
+
+/// v0.6.8 getter for `parentElement` / `parentNode` accessors:
+/// returns `this.__parent__` (an `Object` value when attached,
+/// `Null` when detached or root).  Same implementation for both
+/// accessors -- we don't yet distinguish elements from other node
+/// types, so `parentElement` and `parentNode` produce identical
+/// results.
+///
+/// # Errors
+///
+/// Never returns `Err`.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn parent_getter_impl(_args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
+    let parent = parent_value_of(&this, &heap);
+    Ok((Outcome::Normal(parent), heap, fuel))
 }
 
 /// `Element.classList.add(token)` (v0.6.3): if `token` isn't

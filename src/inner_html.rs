@@ -109,12 +109,16 @@ fn replace_children_from_html(this: &Value, input: &str, heap: Heap) -> Heap {
     let Some(element_id) = object_id_from_value(this) else {
         return heap;
     };
-    let Some(element) = heap.object(element_id) else {
+    let Some(element) = heap.object(element_id).cloned() else {
         return heap;
     };
     let Some(children_id) = element.get("children").and_then(object_id_from_value) else {
         return heap;
     };
+    let old_children_values = collect_old_children_values(children_id, &heap);
+    let heap = old_children_values.iter().fold(heap, |heap, child| {
+        crate::element::clear_parent_backref(child, heap)
+    });
     let (new_children_values, heap) = document::parse_fragment_children(input, heap);
     let new_length = u32::try_from(new_children_values.len()).unwrap_or(u32::MAX);
     let pairs: BTreeMap<String, Value> = new_children_values
@@ -127,8 +131,29 @@ fn replace_children_from_html(this: &Value, input: &str, heap: Heap) -> Heap {
         )))
         .collect();
     let new_children = Object::from_properties(pairs);
-    heap.store_object(children_id, new_children)
-        .unwrap_or_else(|h| h)
+    let heap = heap
+        .store_object(children_id, new_children)
+        .unwrap_or_else(|h| h);
+    new_children_values.iter().fold(heap, |heap, child| {
+        crate::element::set_parent_backref(child, element_id, heap)
+    })
+}
+
+fn collect_old_children_values(children_id: ObjectId, heap: &Heap) -> Vec<Value> {
+    let Some(children) = heap.object(children_id) else {
+        return Vec::new();
+    };
+    let length = match children.get("length") {
+        Some(Value::Number(n)) if n.is_finite() && *n >= 0.0 => {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let len = *n as u32;
+            len
+        }
+        Some(_) | None => 0,
+    };
+    (0..length)
+        .filter_map(|i| children.get(&format!("{i}")).cloned())
+        .collect()
 }
 
 fn serialize_inner(this: &Value, heap: &Heap) -> String {
