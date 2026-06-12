@@ -28,6 +28,7 @@ pub mod element;
 pub mod error;
 pub mod extract;
 pub mod fetch;
+pub mod inner_html;
 pub mod install;
 
 pub use cookie::{

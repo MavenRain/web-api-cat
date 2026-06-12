@@ -122,6 +122,7 @@ pub fn build_blank_element(tag: &str, heap: Heap) -> (Value, Heap) {
     );
     let (id, heap) = heap.alloc_object(Object::from_properties(props));
     let heap = install_class_list(id, heap);
+    let heap = crate::inner_html::install_inner_html_accessor(&Value::Object(id), heap);
     (Value::Object(id), heap)
 }
 
@@ -273,7 +274,37 @@ fn build_element(html_element: &HtmlElement, heap: Heap) -> (Value, Heap) {
     );
     let (id, heap) = heap.alloc_object(Object::from_properties(props));
     let heap = install_class_list(id, heap);
+    let heap = crate::inner_html::install_inner_html_accessor(&Value::Object(id), heap);
     (Value::Object(id), heap)
+}
+
+/// v0.6.5 helper used by [`crate::inner_html`]: parse `html` as a
+/// fragment (wrapped in `<html><body>...</body></html>` so the
+/// html-cat full-document parser handles it), locate the body
+/// element, and run [`build_children`] over its child nodes.
+/// Returns the produced child element values plus the updated
+/// heap.  On parse failure returns an empty vector and the
+/// unchanged heap so the caller can treat it as a no-op.
+#[must_use]
+pub fn parse_fragment_children(html: &str, heap: Heap) -> (Vec<Value>, Heap) {
+    let wrapped = format!("<html><body>{html}</body></html>");
+    let Ok(doc) = html_cat::parse(&wrapped) else {
+        return (Vec::new(), heap);
+    };
+    let root = doc.root();
+    let body = find_html_body(root).unwrap_or(root);
+    build_children(body.children(), heap)
+}
+
+fn find_html_body(element: &HtmlElement) -> Option<&HtmlElement> {
+    if element.name().eq_ignore_ascii_case("body") {
+        Some(element)
+    } else {
+        element.children().iter().find_map(|c| match c {
+            HtmlNode::Element(e) => find_html_body(e),
+            HtmlNode::Text(_) | HtmlNode::Comment(_) => None,
+        })
+    }
 }
 
 fn build_children(children: &[HtmlNode], heap: Heap) -> (Vec<Value>, Heap) {
