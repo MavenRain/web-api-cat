@@ -120,6 +120,7 @@ pub fn build_blank_element(tag: &str, heap: Heap) -> (Value, Heap) {
         "insertBefore".to_owned(),
         Value::Native(element::insert_before_impl),
     );
+    let _ = props.insert("cloneNode".to_owned(), Value::Native(clone_node_impl));
     let (id, heap) = heap.alloc_object(Object::from_properties(props));
     let heap = install_class_list(id, heap);
     let heap = crate::inner_html::install_inner_html_accessor(&Value::Object(id), heap);
@@ -272,10 +273,118 @@ fn build_element(html_element: &HtmlElement, heap: Heap) -> (Value, Heap) {
         "insertBefore".to_owned(),
         Value::Native(element::insert_before_impl),
     );
+    let _ = props.insert("cloneNode".to_owned(), Value::Native(clone_node_impl));
     let (id, heap) = heap.alloc_object(Object::from_properties(props));
     let heap = install_class_list(id, heap);
     let heap = crate::inner_html::install_inner_html_accessor(&Value::Object(id), heap);
     (Value::Object(id), heap)
+}
+
+/// `Element.cloneNode(deep)` (v0.6.6): produce an independent copy
+/// of `this`.  `deep === true` clones every descendant
+/// recursively; the default (no argument or anything that isn't
+/// the literal `true`) clones only the element itself with an
+/// empty children array.  Returns `null` if `this` isn't an
+/// Object.
+///
+/// The clone has fresh `ObjectId`s for the element, its
+/// `__attributes`, its `style`, its `classList` (with a backref to
+/// the new element id), and its children array.  Native-method
+/// bindings (`getAttribute`, `appendChild`, ...) are copied by
+/// value (function pointers, no per-instance state).  The
+/// `innerHTML` accessor is freshly installed on the clone.  All of
+/// that means mutating `clone.setAttribute(...)`,
+/// `clone.classList.add(...)`, `clone.style.x = ...`, or
+/// `clone.appendChild(...)` cannot bleed back into the original.
+///
+/// # Errors
+///
+/// Never returns `Err`; bad inputs yield `null`.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+fn clone_node_impl(args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
+    let deep = matches!(args.first(), Some(Value::Boolean(true)));
+    let (clone_value, heap) = if let Some(id) = object_id_of(&this) {
+        clone_element(id, deep, heap)
+    } else {
+        (Value::Null, heap)
+    };
+    Ok((Outcome::Normal(clone_value), heap, fuel))
+}
+
+fn clone_element(element_id: ObjectId, deep: bool, heap: Heap) -> (Value, Heap) {
+    let Some(original) = heap.object(element_id).cloned() else {
+        return (Value::Null, heap);
+    };
+    let attrs_id_opt = original.get("__attributes").and_then(object_id_of);
+    let (cloned_attrs_id_opt, heap) = clone_object_option(attrs_id_opt, heap);
+    let style_id_opt = original.get("style").and_then(object_id_of);
+    let (cloned_style_id_opt, heap) = clone_object_option(style_id_opt, heap);
+    let children_id_opt = original.get("children").and_then(object_id_of);
+    let (new_children_values, heap) = if deep {
+        if let Some(cid) = children_id_opt {
+            clone_children_deep(cid, heap)
+        } else {
+            (Vec::new(), heap)
+        }
+    } else {
+        (Vec::new(), heap)
+    };
+    let (new_children_array_value, heap) = build_array_object(&new_children_values, heap);
+    let new_props: BTreeMap<String, Value> = original
+        .properties()
+        .iter()
+        .filter(|(k, _)| {
+            !matches!(
+                k.as_str(),
+                "__attributes" | "style" | "children" | "classList"
+            )
+        })
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .chain(cloned_attrs_id_opt.map(|id| ("__attributes".to_owned(), Value::Object(id))))
+        .chain(cloned_style_id_opt.map(|id| ("style".to_owned(), Value::Object(id))))
+        .chain(std::iter::once((
+            "children".to_owned(),
+            new_children_array_value,
+        )))
+        .collect();
+    let (new_element_id, heap) = heap.alloc_object(Object::from_properties(new_props));
+    let heap = install_class_list(new_element_id, heap);
+    let heap = crate::inner_html::install_inner_html_accessor(&Value::Object(new_element_id), heap);
+    (Value::Object(new_element_id), heap)
+}
+
+fn clone_object_option(id_opt: Option<ObjectId>, heap: Heap) -> (Option<ObjectId>, Heap) {
+    let Some(id) = id_opt else {
+        return (None, heap);
+    };
+    let Some(obj) = heap.object(id).cloned() else {
+        return (None, heap);
+    };
+    let (new_id, heap) = heap.alloc_object(obj);
+    (Some(new_id), heap)
+}
+
+fn clone_children_deep(children_id: ObjectId, heap: Heap) -> (Vec<Value>, Heap) {
+    let Some(children) = heap.object(children_id).cloned() else {
+        return (Vec::new(), heap);
+    };
+    let length = match children.get("length") {
+        Some(Value::Number(n)) if n.is_finite() && *n >= 0.0 => {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let len = *n as u32;
+            len
+        }
+        Some(_) | None => 0,
+    };
+    (0..length).fold((Vec::new(), heap), |(acc, heap), i| {
+        if let Some(child_id) = children.get(&format!("{i}")).and_then(object_id_of) {
+            let (cloned, h) = clone_element(child_id, true, heap);
+            let acc = acc.into_iter().chain(std::iter::once(cloned)).collect();
+            (acc, h)
+        } else {
+            (acc, heap)
+        }
+    })
 }
 
 /// v0.6.5 helper used by [`crate::inner_html`]: parse `html` as a
