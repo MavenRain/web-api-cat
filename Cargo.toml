@@ -1,8 +1,8 @@
 [package]
 name = "web-api-cat"
-version = "0.6.8"
+version = "0.6.9"
 edition = "2024"
-description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.6.8 lands parent-backref infrastructure: every element gets a hidden `__parent__` slot (Object when attached, Null when detached or root), every structural mutator (`appendChild` / `removeChild` / `insertBefore` / `replaceChild` / `innerHTML` setter / `cloneNode` deep-children) routes through shared `set_parent_backref` / `clear_parent_backref` helpers, and `parentElement` / `parentNode` accessor-getters plus `Element.remove()` ride on top.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.6.9 cashes in on the v0.6.8 parent-backref infrastructure: real `Element.outerHTML` setter (splices the parsed fragment into parent.children at this's index, detaches self, sets parent backref on every spliced-in root) plus four sibling/child navigation accessors (`firstElementChild`, `lastElementChild`, `previousElementSibling`, `nextElementSibling`).  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
 license = "MIT OR Apache-2.0"
 keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
 categories = ["web-programming"]

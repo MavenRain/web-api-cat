@@ -130,6 +130,7 @@ pub fn build_blank_element(tag: &str, heap: Heap) -> (Value, Heap) {
     let (id, heap) = heap.alloc_object(Object::from_properties(props));
     let heap = install_class_list(id, heap);
     let heap = install_parent_accessors(id, heap);
+    let heap = install_sibling_accessors(id, heap);
     let heap = crate::inner_html::install_inner_html_accessor(&Value::Object(id), heap);
     let heap = crate::inner_html::install_outer_html_accessor(&Value::Object(id), heap);
     (Value::Object(id), heap)
@@ -152,6 +153,40 @@ fn install_parent_accessors(element_id: ObjectId, heap: Heap) -> Heap {
     let updated = element
         .with_accessor("parentElement".to_owned(), parent_element_pair)
         .with_accessor("parentNode".to_owned(), parent_node_pair);
+    heap.store_object(element_id, updated).unwrap_or_else(|h| h)
+}
+
+/// v0.6.9 helper: install the four sibling/child navigation
+/// accessors (`firstElementChild`, `lastElementChild`,
+/// `previousElementSibling`, `nextElementSibling`) as getter-only
+/// accessor pairs.  All four read from the children-array Object
+/// (either `this`'s own or `this.__parent__`'s) and return either
+/// a child element Value or `Value::Null`.
+fn install_sibling_accessors(element_id: ObjectId, heap: Heap) -> Heap {
+    let Some(element) = heap.object(element_id).cloned() else {
+        return heap;
+    };
+    let first_pair = boa_cat::value::AccessorPair::new(
+        Some(Value::Native(element::first_element_child_getter_impl)),
+        None,
+    );
+    let last_pair = boa_cat::value::AccessorPair::new(
+        Some(Value::Native(element::last_element_child_getter_impl)),
+        None,
+    );
+    let prev_pair = boa_cat::value::AccessorPair::new(
+        Some(Value::Native(element::previous_element_sibling_getter_impl)),
+        None,
+    );
+    let next_pair = boa_cat::value::AccessorPair::new(
+        Some(Value::Native(element::next_element_sibling_getter_impl)),
+        None,
+    );
+    let updated = element
+        .with_accessor("firstElementChild".to_owned(), first_pair)
+        .with_accessor("lastElementChild".to_owned(), last_pair)
+        .with_accessor("previousElementSibling".to_owned(), prev_pair)
+        .with_accessor("nextElementSibling".to_owned(), next_pair);
     heap.store_object(element_id, updated).unwrap_or_else(|h| h)
 }
 
@@ -314,6 +349,7 @@ fn build_element(html_element: &HtmlElement, heap: Heap) -> (Value, Heap) {
     });
     let heap = install_class_list(id, heap);
     let heap = install_parent_accessors(id, heap);
+    let heap = install_sibling_accessors(id, heap);
     let heap = crate::inner_html::install_inner_html_accessor(&Value::Object(id), heap);
     let heap = crate::inner_html::install_outer_html_accessor(&Value::Object(id), heap);
     (Value::Object(id), heap)
@@ -393,6 +429,7 @@ fn clone_element(element_id: ObjectId, deep: bool, heap: Heap) -> (Value, Heap) 
     });
     let heap = install_class_list(new_element_id, heap);
     let heap = install_parent_accessors(new_element_id, heap);
+    let heap = install_sibling_accessors(new_element_id, heap);
     let heap = crate::inner_html::install_inner_html_accessor(&Value::Object(new_element_id), heap);
     let heap = crate::inner_html::install_outer_html_accessor(&Value::Object(new_element_id), heap);
     (Value::Object(new_element_id), heap)

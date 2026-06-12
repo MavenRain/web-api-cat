@@ -94,8 +94,93 @@ fn outer_html_getter_impl(_args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel
 }
 
 #[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
-fn outer_html_setter_impl(_args: Vec<Value>, _this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
-    Ok((Outcome::Normal(Value::Undefined), heap, fuel))
+fn outer_html_setter_impl(args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
+    let input = string_arg(&args, 0);
+    let new_heap = replace_outer_with_html(&this, &input, heap);
+    Ok((Outcome::Normal(Value::Undefined), new_heap, fuel))
+}
+
+fn replace_outer_with_html(this: &Value, input: &str, heap: Heap) -> Heap {
+    let Some(this_id) = object_id_from_value(this) else {
+        return heap;
+    };
+    let Some(this_obj) = heap.object(this_id) else {
+        return heap;
+    };
+    let parent_value = this_obj.get("__parent__").cloned().unwrap_or(Value::Null);
+    let Some(parent_id) = object_id_from_value(&parent_value) else {
+        return heap;
+    };
+    let Some(parent) = heap.object(parent_id) else {
+        return heap;
+    };
+    let Some(children_id) = parent.get("children").and_then(object_id_from_value) else {
+        return heap;
+    };
+    let Some(children_obj) = heap.object(children_id).cloned() else {
+        return heap;
+    };
+    let length = children_array_length(&children_obj);
+    let Some(this_index) = (0..length).find(|i| {
+        children_obj
+            .get(&format!("{i}"))
+            .and_then(object_id_from_value)
+            == Some(this_id)
+    }) else {
+        return heap;
+    };
+    let heap = crate::element::clear_parent_backref(this, heap);
+    let (new_children_values, heap) = document::parse_fragment_children(input, heap);
+    let inserted_count = u32::try_from(new_children_values.len()).unwrap_or(u32::MAX);
+    let new_length = length - 1 + inserted_count;
+    let after_start = this_index + inserted_count;
+    let pairs: BTreeMap<String, Value> = (0..new_length)
+        .map(|new_idx| {
+            let value = match (new_idx < this_index, new_idx < after_start) {
+                (true, true | false) => children_obj
+                    .get(&format!("{new_idx}"))
+                    .cloned()
+                    .unwrap_or(Value::Null),
+                (false, true) => {
+                    let parsed_offset = new_idx - this_index;
+                    new_children_values
+                        .get(usize::try_from(parsed_offset).unwrap_or(usize::MAX))
+                        .cloned()
+                        .unwrap_or(Value::Null)
+                }
+                (false, false) => {
+                    let old_idx = new_idx + 1 - inserted_count;
+                    children_obj
+                        .get(&format!("{old_idx}"))
+                        .cloned()
+                        .unwrap_or(Value::Null)
+                }
+            };
+            (format!("{new_idx}"), value)
+        })
+        .chain(std::iter::once((
+            "length".to_owned(),
+            Value::Number(f64::from(new_length)),
+        )))
+        .collect();
+    let new_children = Object::from_properties(pairs);
+    let heap = heap
+        .store_object(children_id, new_children)
+        .unwrap_or_else(|h| h);
+    new_children_values.iter().fold(heap, |heap, child| {
+        crate::element::set_parent_backref(child, parent_id, heap)
+    })
+}
+
+fn children_array_length(children: &Object) -> u32 {
+    match children.get("length") {
+        Some(Value::Number(n)) if n.is_finite() && *n >= 0.0 => {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let len = *n as u32;
+            len
+        }
+        Some(_) | None => 0,
+    }
 }
 
 #[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]

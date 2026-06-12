@@ -655,6 +655,110 @@ pub fn parent_getter_impl(_args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel
     Ok((Outcome::Normal(parent), heap, fuel))
 }
 
+/// v0.6.9 getter for `firstElementChild`: `this.children[0]` or
+/// `Value::Null` if `this` has no children.
+///
+/// # Errors
+///
+/// Never returns `Err`.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn first_element_child_getter_impl(
+    _args: Vec<Value>,
+    this: Value,
+    heap: Heap,
+    fuel: Fuel,
+) -> EvalResult {
+    let value = own_children_view(&this, &heap)
+        .filter(|(_, length)| *length > 0)
+        .and_then(|(children, _)| children.get("0").cloned())
+        .unwrap_or(Value::Null);
+    Ok((Outcome::Normal(value), heap, fuel))
+}
+
+/// v0.6.9 getter for `lastElementChild`: `this.children[length-1]`
+/// or `Value::Null` if `this` has no children.
+///
+/// # Errors
+///
+/// Never returns `Err`.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn last_element_child_getter_impl(
+    _args: Vec<Value>,
+    this: Value,
+    heap: Heap,
+    fuel: Fuel,
+) -> EvalResult {
+    let value = own_children_view(&this, &heap)
+        .filter(|(_, length)| *length > 0)
+        .and_then(|(children, length)| children.get(&format!("{}", length - 1)).cloned())
+        .unwrap_or(Value::Null);
+    Ok((Outcome::Normal(value), heap, fuel))
+}
+
+/// v0.6.9 getter for `previousElementSibling`: looks `this` up by
+/// id in its parent's children-array Object, returns the entry at
+/// `this_index - 1` if it exists, else `Value::Null`.
+///
+/// # Errors
+///
+/// Never returns `Err`.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn previous_element_sibling_getter_impl(
+    _args: Vec<Value>,
+    this: Value,
+    heap: Heap,
+    fuel: Fuel,
+) -> EvalResult {
+    let value = parent_children_view(&this, &heap)
+        .filter(|(_, _, this_index)| *this_index > 0)
+        .and_then(|(children, _, this_index)| children.get(&format!("{}", this_index - 1)).cloned())
+        .unwrap_or(Value::Null);
+    Ok((Outcome::Normal(value), heap, fuel))
+}
+
+/// v0.6.9 getter for `nextElementSibling`: looks `this` up by id
+/// in its parent's children-array Object, returns the entry at
+/// `this_index + 1` if it exists, else `Value::Null`.
+///
+/// # Errors
+///
+/// Never returns `Err`.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn next_element_sibling_getter_impl(
+    _args: Vec<Value>,
+    this: Value,
+    heap: Heap,
+    fuel: Fuel,
+) -> EvalResult {
+    let value = parent_children_view(&this, &heap)
+        .filter(|(_, length, this_index)| this_index + 1 < *length)
+        .and_then(|(children, _, this_index)| children.get(&format!("{}", this_index + 1)).cloned())
+        .unwrap_or(Value::Null);
+    Ok((Outcome::Normal(value), heap, fuel))
+}
+
+fn own_children_view<'h>(this: &Value, heap: &'h Heap) -> Option<(&'h Object, u32)> {
+    let this_id = object_id_of(this)?;
+    let this_obj = heap.object(this_id)?;
+    let children_id = this_obj.get("children").and_then(object_id_of)?;
+    let children = heap.object(children_id)?;
+    let length = array_length(children);
+    Some((children, length))
+}
+
+fn parent_children_view<'h>(this: &Value, heap: &'h Heap) -> Option<(&'h Object, u32, u32)> {
+    let this_id = object_id_of(this)?;
+    let this_obj = heap.object(this_id)?;
+    let parent_id = this_obj.get("__parent__").and_then(object_id_of)?;
+    let parent = heap.object(parent_id)?;
+    let children_id = parent.get("children").and_then(object_id_of)?;
+    let children = heap.object(children_id)?;
+    let length = array_length(children);
+    let this_index = (0..length)
+        .find(|i| children.get(&format!("{i}")).and_then(object_id_of) == Some(this_id))?;
+    Some((children, length, this_index))
+}
+
 /// `Element.classList.add(token)` (v0.6.3): if `token` isn't
 /// already among the parent element's class tokens, append it and
 /// write the rejoined token list back through `setAttribute`-style
