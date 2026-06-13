@@ -1,8 +1,8 @@
 [package]
 name = "web-api-cat"
-version = "0.7.4"
+version = "0.7.5"
 edition = "2024"
-description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.4 ships the `EventTarget` mixin: `addEventListener(type, callback)` queues handlers under a lazy `__listeners__` slot; `removeEventListener` drops them by `Value::PartialEq`; `dispatchEvent(event)` walks the bubble chain via the v0.6.8 `__parent__` backref and invokes each handler through boa-cat 0.7.1's now-public `expression::call_function`.  Listener throws are swallowed at the dispatch boundary per DOM spec.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.5 extends the v0.7.4 event system with spec-compliant event flow: `dispatchEvent` decorates the supplied event with `target` / `currentTarget` / `defaultPrevented` plus `preventDefault()` / `stopPropagation()` / `stopImmediatePropagation()` methods.  Listeners interact with the dispatch as they would in a real browser without needing a `new Event()` constructor.  `dispatchEvent` returns `false` when any listener called `preventDefault`.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
 license = "MIT OR Apache-2.0"
 keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
 categories = ["web-programming"]

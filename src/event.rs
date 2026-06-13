@@ -24,11 +24,13 @@
 //! - No capture phase (bubble only).  `addEventListener(_, _,
 //!   true)` ignores the capture flag.
 //! - No `Event` constructor; scripts pass plain `{ type: 'foo' }`
-//!   objects.  A future chunk can add `new Event(type)` once the
-//!   engine grows `NewExpression` dispatch on `NativeFn`
-//!   constructors.
-//! - No `event.preventDefault()` / `stopPropagation()` -- the
-//!   event Object is shuttled through dispatch unchanged.
+//!   objects.  v0.7.5 augments the supplied event with
+//!   `target` / `currentTarget` / `defaultPrevented` /
+//!   `preventDefault` / `stopPropagation` /
+//!   `stopImmediatePropagation`, so scripts written against the
+//!   spec's Event API work without needing the constructor.  A
+//!   future chunk can add `new Event(type)` once the engine grows
+//!   `NewExpression` dispatch on `NativeFn` constructors.
 //! - No `once` / `passive` / `signal` listener options.
 
 use std::collections::BTreeMap;
@@ -89,12 +91,21 @@ pub fn remove_event_listener_impl(
     Ok((Outcome::Normal(Value::Undefined), new_heap, fuel))
 }
 
-/// `EventTarget.dispatchEvent(event)` (v0.7.4): walk the bubble
-/// chain (target then ancestors via `__parent__`) and invoke
-/// every listener registered for `event.type` at each level.
-/// Listener throws are swallowed per DOM dispatch semantics
-/// (report-and-continue).  Returns `true` per spec (we don't yet
-/// honour `event.defaultPrevented`).
+/// `EventTarget.dispatchEvent(event)` (v0.7.4, extended v0.7.5):
+/// walk the bubble chain (target then ancestors via
+/// `__parent__`) and invoke every listener registered for
+/// `event.type` at each level.  v0.7.5 decorates the supplied
+/// event with `target` / `currentTarget` / `defaultPrevented`
+/// (initially `false`) and `preventDefault` /
+/// `stopPropagation` / `stopImmediatePropagation` methods so
+/// listeners can interact with the dispatch in spec-compliant
+/// shape.  `currentTarget` updates per bubble level;
+/// `stopPropagation` halts the bubble after the current level
+/// finishes; `stopImmediatePropagation` halts both remaining
+/// listeners at the current level AND the bubble; `preventDefault`
+/// sets `defaultPrevented = true` and makes this fn return
+/// `false`.  Listener throws are swallowed per DOM dispatch
+/// semantics (report-and-continue).
 ///
 /// # Errors
 ///
@@ -104,12 +115,164 @@ pub fn remove_event_listener_impl(
 #[allow(clippy::needless_pass_by_value)]
 pub fn dispatch_event_impl(args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
     let event = args.first().cloned().unwrap_or(Value::Undefined);
-    let event_type = read_event_type(&event, &heap);
+    let Some(target_id) = object_id_of(&this) else {
+        return Ok((Outcome::Normal(Value::Boolean(true)), heap, fuel));
+    };
+    let (decorated, heap) = decorate_event(&event, target_id, heap);
+    let event_type = read_event_type(&decorated, &heap);
     let chain = build_bubble_chain(&this, &heap);
-    let (heap, fuel) = chain.iter().try_fold((heap, fuel), |(heap, fuel), level| {
-        invoke_level_listeners(level, &event, &event_type, heap, fuel)
-    })?;
-    Ok((Outcome::Normal(Value::Boolean(true)), heap, fuel))
+    let (heap, fuel) = chain.iter().try_fold(
+        (heap, fuel),
+        |(heap, fuel), level| -> Result<_, boa_cat::Error> {
+            if read_bool_flag(&decorated, PROPAGATION_STOPPED_KEY, &heap)
+                || read_bool_flag(&decorated, IMMEDIATE_STOPPED_KEY, &heap)
+            {
+                Ok((heap, fuel))
+            } else {
+                let heap = if let Some(id) = object_id_of(level) {
+                    set_current_target(&decorated, id, heap)
+                } else {
+                    heap
+                };
+                invoke_level_listeners(level, &decorated, &event_type, heap, fuel)
+            }
+        },
+    )?;
+    let default_prevented = read_bool_flag(&decorated, DEFAULT_PREVENTED_KEY, &heap);
+    Ok((
+        Outcome::Normal(Value::Boolean(!default_prevented)),
+        heap,
+        fuel,
+    ))
+}
+
+/// Property key under which the `event.defaultPrevented` flag
+/// lives once dispatchEvent has decorated the event.
+pub const DEFAULT_PREVENTED_KEY: &str = "defaultPrevented";
+
+const PROPAGATION_STOPPED_KEY: &str = "__propagation_stopped__";
+const IMMEDIATE_STOPPED_KEY: &str = "__immediate_propagation_stopped__";
+
+/// v0.7.5 `event.preventDefault()` impl: set
+/// `this.defaultPrevented = true`.  No-op if `this` isn't an
+/// Object.  Idempotent.
+///
+/// # Errors
+///
+/// Never returns `Err`.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn prevent_default_impl(_args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
+    let new_heap = set_bool_flag(&this, DEFAULT_PREVENTED_KEY, heap);
+    Ok((Outcome::Normal(Value::Undefined), new_heap, fuel))
+}
+
+/// v0.7.5 `event.stopPropagation()` impl: set the hidden
+/// propagation-stopped flag so the bubble walk halts after the
+/// current level finishes.  Remaining listeners at the current
+/// level still fire (see `stopImmediatePropagation` for the
+/// stricter variant).
+///
+/// # Errors
+///
+/// Never returns `Err`.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn stop_propagation_impl(_args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
+    let new_heap = set_bool_flag(&this, PROPAGATION_STOPPED_KEY, heap);
+    Ok((Outcome::Normal(Value::Undefined), new_heap, fuel))
+}
+
+/// v0.7.5 `event.stopImmediatePropagation()` impl: set both the
+/// propagation-stopped flag AND the immediate-stopped flag so
+/// remaining listeners at the current level are skipped in
+/// addition to the bubble halt.
+///
+/// # Errors
+///
+/// Never returns `Err`.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn stop_immediate_propagation_impl(
+    _args: Vec<Value>,
+    this: Value,
+    heap: Heap,
+    fuel: Fuel,
+) -> EvalResult {
+    let heap = set_bool_flag(&this, PROPAGATION_STOPPED_KEY, heap);
+    let heap = set_bool_flag(&this, IMMEDIATE_STOPPED_KEY, heap);
+    Ok((Outcome::Normal(Value::Undefined), heap, fuel))
+}
+
+fn decorate_event(event: &Value, target_id: ObjectId, heap: Heap) -> (Value, Heap) {
+    let user_props: BTreeMap<String, Value> = object_id_of(event)
+        .and_then(|id| heap.object(id))
+        .map(|obj| {
+            obj.properties()
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let decoration = [
+        ("target".to_owned(), Value::Object(target_id)),
+        ("currentTarget".to_owned(), Value::Object(target_id)),
+        (DEFAULT_PREVENTED_KEY.to_owned(), Value::Boolean(false)),
+        (PROPAGATION_STOPPED_KEY.to_owned(), Value::Boolean(false)),
+        (IMMEDIATE_STOPPED_KEY.to_owned(), Value::Boolean(false)),
+        (
+            "preventDefault".to_owned(),
+            Value::Native(prevent_default_impl),
+        ),
+        (
+            "stopPropagation".to_owned(),
+            Value::Native(stop_propagation_impl),
+        ),
+        (
+            "stopImmediatePropagation".to_owned(),
+            Value::Native(stop_immediate_propagation_impl),
+        ),
+    ];
+    let combined: BTreeMap<String, Value> = user_props.into_iter().chain(decoration).collect();
+    let (id, heap) = heap.alloc_object(Object::from_properties(combined));
+    (Value::Object(id), heap)
+}
+
+fn set_current_target(event: &Value, level_id: ObjectId, heap: Heap) -> Heap {
+    let Some(event_id) = object_id_of(event) else {
+        return heap;
+    };
+    let Some(obj) = heap.object(event_id).cloned() else {
+        return heap;
+    };
+    let updated = obj.with("currentTarget".to_owned(), Value::Object(level_id));
+    heap.store_object(event_id, updated).unwrap_or_else(|h| h)
+}
+
+fn set_bool_flag(this: &Value, key: &str, heap: Heap) -> Heap {
+    let Some(id) = object_id_of(this) else {
+        return heap;
+    };
+    let Some(obj) = heap.object(id).cloned() else {
+        return heap;
+    };
+    let updated = obj.with(key.to_owned(), Value::Boolean(true));
+    heap.store_object(id, updated).unwrap_or_else(|h| h)
+}
+
+fn read_bool_flag(value: &Value, key: &str, heap: &Heap) -> bool {
+    object_id_of(value)
+        .and_then(|id| heap.object(id))
+        .and_then(|obj| obj.get(key))
+        .and_then(|v| match v {
+            Value::Boolean(b) => Some(*b),
+            Value::Undefined
+            | Value::Null
+            | Value::Number(_)
+            | Value::String(_)
+            | Value::Object(_)
+            | Value::Function(_)
+            | Value::Native(_)
+            | Value::Promise(_) => None,
+        })
+        .unwrap_or(false)
 }
 
 fn append_listener(this: &Value, event_type: &str, callback: Value, heap: Heap) -> Heap {
@@ -183,14 +346,18 @@ fn invoke_level_listeners(
     listeners
         .into_iter()
         .try_fold((heap, fuel), |(heap, fuel), callback| {
-            let (_outcome, heap, fuel) = boa_cat::expression::call_function(
-                &callback,
-                level,
-                vec![event.clone()],
-                heap,
-                fuel,
-            )?;
-            Ok((heap, fuel))
+            if read_bool_flag(event, IMMEDIATE_STOPPED_KEY, &heap) {
+                Ok((heap, fuel))
+            } else {
+                let (_outcome, heap, fuel) = boa_cat::expression::call_function(
+                    &callback,
+                    level,
+                    vec![event.clone()],
+                    heap,
+                    fuel,
+                )?;
+                Ok((heap, fuel))
+            }
         })
 }
 

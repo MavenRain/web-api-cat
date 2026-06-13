@@ -213,3 +213,182 @@ fn dispatch_with_no_listeners_is_a_silent_noop() -> Result<(), Error> {
         .then_some(())
         .ok_or_else(|| fail("expected silent no-op when no listeners are registered"))
 }
+
+#[test]
+fn prevent_default_makes_dispatch_event_return_false() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='host'></div></body></html>",
+        "const host = document.getElementById('host');
+        host.addEventListener('click', (e) => { e.preventDefault(); });
+        host.dispatchEvent({ type: 'click' })",
+    )?;
+    matches!(value, Value::Boolean(false))
+        .then_some(())
+        .ok_or_else(|| fail("expected dispatchEvent to return false after preventDefault"))
+}
+
+#[test]
+fn prevent_default_sets_default_prevented_flag_on_event() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='host'></div></body></html>",
+        "let observed = 'unset';
+        const host = document.getElementById('host');
+        host.addEventListener('click', (e) => { e.preventDefault(); });
+        host.addEventListener('click', (e) => { observed = e.defaultPrevented; });
+        host.dispatchEvent({ type: 'click' });
+        observed",
+    )?;
+    matches!(value, Value::Boolean(true))
+        .then_some(())
+        .ok_or_else(|| fail("expected defaultPrevented flag visible to subsequent listeners"))
+}
+
+#[test]
+fn dispatch_without_prevent_default_returns_true() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='host'></div></body></html>",
+        "const host = document.getElementById('host');
+        host.addEventListener('click', () => {});
+        host.dispatchEvent({ type: 'click' })",
+    )?;
+    matches!(value, Value::Boolean(true))
+        .then_some(())
+        .ok_or_else(|| {
+            fail("expected dispatchEvent to return true when no preventDefault was called")
+        })
+}
+
+#[test]
+fn stop_propagation_halts_bubble_after_current_level() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='parent'><span id='child'>x</span></div></body></html>",
+        "let trace = '';
+        const child = document.getElementById('child');
+        const parent = document.getElementById('parent');
+        child.addEventListener('click', (e) => { trace = trace + 'c'; e.stopPropagation(); });
+        parent.addEventListener('click', () => { trace = trace + 'p'; });
+        child.dispatchEvent({ type: 'click' });
+        trace",
+    )?;
+    matches!(value, Value::String(ref s) if s == "c")
+        .then_some(())
+        .ok_or_else(|| fail("expected stopPropagation to skip the parent listener"))
+}
+
+#[test]
+fn stop_propagation_still_fires_remaining_listeners_at_current_level() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='parent'><span id='child'>x</span></div></body></html>",
+        "let trace = '';
+        const child = document.getElementById('child');
+        const parent = document.getElementById('parent');
+        child.addEventListener('click', (e) => { trace = trace + 'a'; e.stopPropagation(); });
+        child.addEventListener('click', () => { trace = trace + 'b'; });
+        parent.addEventListener('click', () => { trace = trace + 'p'; });
+        child.dispatchEvent({ type: 'click' });
+        trace",
+    )?;
+    matches!(value, Value::String(ref s) if s == "ab")
+        .then_some(())
+        .ok_or_else(|| fail("expected stopPropagation to keep sibling listeners but skip parent"))
+}
+
+#[test]
+fn stop_immediate_propagation_halts_remaining_listeners_at_current_level() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='parent'><span id='child'>x</span></div></body></html>",
+        "let trace = '';
+        const child = document.getElementById('child');
+        const parent = document.getElementById('parent');
+        child.addEventListener('click', (e) => { trace = trace + 'a'; e.stopImmediatePropagation(); });
+        child.addEventListener('click', () => { trace = trace + 'b'; });
+        parent.addEventListener('click', () => { trace = trace + 'p'; });
+        child.dispatchEvent({ type: 'click' });
+        trace",
+    )?;
+    matches!(value, Value::String(ref s) if s == "a")
+        .then_some(())
+        .ok_or_else(|| fail("expected stopImmediatePropagation to skip BOTH sibling and parent"))
+}
+
+#[test]
+fn event_target_stays_as_original_dispatch_target() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='parent'><span id='child'>x</span></div></body></html>",
+        "let observed = '';
+        const child = document.getElementById('child');
+        const parent = document.getElementById('parent');
+        parent.addEventListener('click', (e) => { observed = e.target.tagName; });
+        child.dispatchEvent({ type: 'click' });
+        observed",
+    )?;
+    matches!(value, Value::String(ref s) if s == "span")
+        .then_some(())
+        .ok_or_else(|| fail("expected event.target to be the original dispatch target (span)"))
+}
+
+#[test]
+fn event_current_target_reflects_current_bubble_level() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='parent'><span id='child'>x</span></div></body></html>",
+        "let trace = '';
+        const child = document.getElementById('child');
+        const parent = document.getElementById('parent');
+        child.addEventListener('click', (e) => { trace = trace + e.currentTarget.tagName; });
+        parent.addEventListener('click', (e) => { trace = trace + ',' + e.currentTarget.tagName; });
+        child.dispatchEvent({ type: 'click' });
+        trace",
+    )?;
+    matches!(value, Value::String(ref s) if s.eq_ignore_ascii_case("span,div"))
+        .then_some(())
+        .ok_or_else(|| fail("expected currentTarget to update per bubble level"))
+}
+
+#[test]
+fn event_type_is_preserved_through_decoration() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='host'></div></body></html>",
+        "let received = '';
+        const host = document.getElementById('host');
+        host.addEventListener('myevent', (e) => { received = e.type; });
+        host.dispatchEvent({ type: 'myevent' });
+        received",
+    )?;
+    matches!(value, Value::String(ref s) if s == "myevent")
+        .then_some(())
+        .ok_or_else(|| fail("expected event.type to survive dispatch decoration"))
+}
+
+#[test]
+fn prevent_default_does_not_affect_bubble() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='parent'><span id='child'>x</span></div></body></html>",
+        "let trace = '';
+        const child = document.getElementById('child');
+        const parent = document.getElementById('parent');
+        child.addEventListener('click', (e) => { e.preventDefault(); trace = trace + 'c'; });
+        parent.addEventListener('click', () => { trace = trace + 'p'; });
+        child.dispatchEvent({ type: 'click' });
+        trace",
+    )?;
+    matches!(value, Value::String(ref s) if s == "cp")
+        .then_some(())
+        .ok_or_else(|| fail("expected bubble to still fire parent listener after preventDefault"))
+}
+
+#[test]
+fn prevent_default_is_idempotent() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='host'></div></body></html>",
+        "const host = document.getElementById('host');
+        host.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.preventDefault();
+            e.preventDefault();
+        });
+        host.dispatchEvent({ type: 'click' })",
+    )?;
+    matches!(value, Value::Boolean(false))
+        .then_some(())
+        .ok_or_else(|| fail("expected three preventDefault calls to still return false"))
+}
