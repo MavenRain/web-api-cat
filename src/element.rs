@@ -155,8 +155,14 @@ pub fn build_attributes_object(pairs: &[(String, String)], heap: Heap) -> (Value
     (Value::Object(id), heap)
 }
 
-/// `Element.querySelector(selector)` -- limited v0 selector subset
-/// (`tag`, `.class`, `#id`, `tag.class`, `tag#id`).
+/// `Element.querySelector(selector)` -- v0.7.8 supports the
+/// standard surface most real-world scripts need: comma-separated
+/// selector lists; tag / `.class` (multiple) / `#id` / `[attr]` /
+/// `[attr="value"]` / `[attr^="value"]` / `[attr$="value"]` /
+/// `[attr*="value"]` / `*` as compound parts; whitespace
+/// (descendant) and `>` (child) combinators between compounds.
+/// Sibling combinators (`+`, `~`), pseudo-classes / pseudo-
+/// elements, and `:not()` are deferred.
 ///
 /// # Errors
 ///
@@ -165,73 +171,291 @@ pub fn build_attributes_object(pairs: &[(String, String)], heap: Heap) -> (Value
 #[allow(clippy::unnecessary_wraps)]
 pub fn query_selector_impl(args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
     let selector = string_arg(&args, 0);
-    let pattern = parse_simple_selector(&selector);
-    let outcome =
-        find_matching(&this, &pattern, &heap).map_or(Outcome::Normal(Value::Null), Outcome::Normal);
+    let list = parse_selector_list(&selector);
+    let outcome = object_id_of(&this)
+        .and_then(|root_id| find_first_descendant_matching(root_id, &list, &heap))
+        .map_or(Outcome::Normal(Value::Null), Outcome::Normal);
     Ok((outcome, heap, fuel))
 }
 
 #[derive(Debug, Clone, Default)]
-struct SelectorPattern {
+struct SelectorList {
+    selectors: Vec<ComplexSelector>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ComplexSelector {
+    compounds: Vec<CompoundSelector>,
+    combinators: Vec<Combinator>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Combinator {
+    Descendant,
+    Child,
+}
+
+#[derive(Debug, Clone, Default)]
+struct CompoundSelector {
+    universal: bool,
     tag: Option<String>,
     id: Option<String>,
-    class: Option<String>,
+    classes: Vec<String>,
+    attributes: Vec<AttributeMatch>,
 }
 
-fn parse_simple_selector(source: &str) -> SelectorPattern {
-    let trimmed = source.trim();
-    parse_selector_recursive(trimmed, 0, SelectorPattern::default())
+#[derive(Debug, Clone)]
+struct AttributeMatch {
+    name: String,
+    operator: AttrOperator,
+    value: Option<String>,
 }
 
-fn parse_selector_recursive(source: &str, start: usize, acc: SelectorPattern) -> SelectorPattern {
-    let bytes = source.as_bytes();
-    if start >= bytes.len() {
-        acc
+#[derive(Debug, Clone, Copy)]
+enum AttrOperator {
+    Exists,
+    Equals,
+    Contains,
+    StartsWith,
+    EndsWith,
+}
+
+fn parse_selector_list(source: &str) -> SelectorList {
+    let selectors: Vec<ComplexSelector> = source
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(parse_complex_selector)
+        .collect();
+    SelectorList { selectors }
+}
+
+fn parse_complex_selector(source: &str) -> ComplexSelector {
+    let bytes = source.trim().as_bytes();
+    let (first_compound, pos) = parse_compound(bytes, 0);
+    parse_complex_tail(bytes, pos, vec![first_compound], Vec::new())
+}
+
+fn parse_complex_tail(
+    bytes: &[u8],
+    pos: usize,
+    compounds: Vec<CompoundSelector>,
+    combinators: Vec<Combinator>,
+) -> ComplexSelector {
+    let after_ws = skip_whitespace(bytes, pos);
+    if after_ws >= bytes.len() {
+        ComplexSelector {
+            compounds,
+            combinators,
+        }
+    } else if bytes.get(after_ws) == Some(&b'>') {
+        let after_gt = skip_whitespace(bytes, after_ws + 1);
+        let (compound, end) = parse_compound(bytes, after_gt);
+        let new_compounds: Vec<CompoundSelector> = compounds
+            .into_iter()
+            .chain(std::iter::once(compound))
+            .collect();
+        let new_combinators: Vec<Combinator> = combinators
+            .into_iter()
+            .chain(std::iter::once(Combinator::Child))
+            .collect();
+        parse_complex_tail(bytes, end, new_compounds, new_combinators)
+    } else if after_ws > pos {
+        let (compound, end) = parse_compound(bytes, after_ws);
+        let new_compounds: Vec<CompoundSelector> = compounds
+            .into_iter()
+            .chain(std::iter::once(compound))
+            .collect();
+        let new_combinators: Vec<Combinator> = combinators
+            .into_iter()
+            .chain(std::iter::once(Combinator::Descendant))
+            .collect();
+        parse_complex_tail(bytes, end, new_compounds, new_combinators)
     } else {
-        match bytes.get(start) {
-            Some(b'#') => {
-                let end = scan_ident(bytes, start + 1);
-                let name = source.get(start + 1..end).unwrap_or("").to_owned();
-                parse_selector_recursive(
-                    source,
-                    end,
-                    SelectorPattern {
-                        id: Some(name),
-                        ..acc
-                    },
-                )
-            }
-            Some(b'.') => {
-                let end = scan_ident(bytes, start + 1);
-                let name = source.get(start + 1..end).unwrap_or("").to_owned();
-                parse_selector_recursive(
-                    source,
-                    end,
-                    SelectorPattern {
-                        class: Some(name),
-                        ..acc
-                    },
-                )
-            }
-            Some(_) => {
-                let end = scan_ident(bytes, start);
-                let name = source.get(start..end).unwrap_or("").to_ascii_lowercase();
-                if name.is_empty() {
-                    acc
-                } else {
-                    parse_selector_recursive(
-                        source,
+        ComplexSelector {
+            compounds,
+            combinators,
+        }
+    }
+}
+
+fn parse_compound(bytes: &[u8], start: usize) -> (CompoundSelector, usize) {
+    parse_compound_recursive(bytes, start, CompoundSelector::default())
+}
+
+fn parse_compound_recursive(
+    bytes: &[u8],
+    start: usize,
+    acc: CompoundSelector,
+) -> (CompoundSelector, usize) {
+    match bytes.get(start) {
+        None | Some(b' ' | b'\t' | b'\n' | b'\r' | b'>' | b',') => (acc, start),
+        Some(b'*') => parse_compound_recursive(
+            bytes,
+            start + 1,
+            CompoundSelector {
+                universal: true,
+                ..acc
+            },
+        ),
+        Some(b'.') => {
+            let end = scan_ident(bytes, start + 1);
+            let name = ident_string(bytes, start + 1, end);
+            let new_classes: Vec<String> = acc
+                .classes
+                .iter()
+                .cloned()
+                .chain(std::iter::once(name))
+                .collect();
+            parse_compound_recursive(
+                bytes,
+                end,
+                CompoundSelector {
+                    classes: new_classes,
+                    ..acc
+                },
+            )
+        }
+        Some(b'#') => {
+            let end = scan_ident(bytes, start + 1);
+            let name = ident_string(bytes, start + 1, end);
+            parse_compound_recursive(
+                bytes,
+                end,
+                CompoundSelector {
+                    id: Some(name),
+                    ..acc
+                },
+            )
+        }
+        Some(b'[') => {
+            let (attr, end) = parse_attribute_match(bytes, start + 1);
+            let new_attrs: Vec<AttributeMatch> = acc
+                .attributes
+                .iter()
+                .cloned()
+                .chain(std::iter::once(attr))
+                .collect();
+            parse_compound_recursive(
+                bytes,
+                end,
+                CompoundSelector {
+                    attributes: new_attrs,
+                    ..acc
+                },
+            )
+        }
+        Some(_) => {
+            let end = scan_ident(bytes, start);
+            if end <= start {
+                (acc, start + 1)
+            } else {
+                let name = ident_string(bytes, start, end).to_ascii_lowercase();
+                if acc.tag.is_none() && !acc.universal && acc.id.is_none() {
+                    parse_compound_recursive(
+                        bytes,
                         end,
-                        SelectorPattern {
+                        CompoundSelector {
                             tag: Some(name),
                             ..acc
                         },
                     )
+                } else {
+                    (acc, start)
                 }
             }
-            None => acc,
         }
     }
+}
+
+fn parse_attribute_match(bytes: &[u8], start: usize) -> (AttributeMatch, usize) {
+    let name_start = skip_whitespace(bytes, start);
+    let name_end = scan_ident(bytes, name_start);
+    let name = ident_string(bytes, name_start, name_end);
+    let after_name = skip_whitespace(bytes, name_end);
+    match bytes.get(after_name) {
+        Some(b']') => (
+            AttributeMatch {
+                name,
+                operator: AttrOperator::Exists,
+                value: None,
+            },
+            after_name + 1,
+        ),
+        Some(b'=') => {
+            parse_attribute_with_operator(bytes, after_name + 1, name, AttrOperator::Equals)
+        }
+        Some(b'*' | b'^' | b'$') => {
+            let op = match bytes.get(after_name) {
+                Some(b'*') => AttrOperator::Contains,
+                Some(b'^') => AttrOperator::StartsWith,
+                Some(b'$') => AttrOperator::EndsWith,
+                Some(b'=' | b']' | _) | None => AttrOperator::Equals,
+            };
+            let after_op = match bytes.get(after_name + 1) {
+                Some(b'=') => after_name + 2,
+                Some(_) | None => after_name + 1,
+            };
+            parse_attribute_with_operator(bytes, after_op, name, op)
+        }
+        None | Some(_) => (
+            AttributeMatch {
+                name,
+                operator: AttrOperator::Exists,
+                value: None,
+            },
+            after_name,
+        ),
+    }
+}
+
+fn parse_attribute_with_operator(
+    bytes: &[u8],
+    start: usize,
+    name: String,
+    operator: AttrOperator,
+) -> (AttributeMatch, usize) {
+    let after_ws = skip_whitespace(bytes, start);
+    let (value, after_value) = parse_attribute_value(bytes, after_ws);
+    let after_close = match bytes.get(skip_whitespace(bytes, after_value)) {
+        Some(b']') => skip_whitespace(bytes, after_value) + 1,
+        Some(_) | None => after_value,
+    };
+    (
+        AttributeMatch {
+            name,
+            operator,
+            value: Some(value),
+        },
+        after_close,
+    )
+}
+
+fn parse_attribute_value(bytes: &[u8], start: usize) -> (String, usize) {
+    match bytes.get(start) {
+        Some(b'"') => parse_quoted(bytes, start + 1, b'"'),
+        Some(b'\'') => parse_quoted(bytes, start + 1, b'\''),
+        Some(_) => {
+            let end = scan_ident(bytes, start);
+            (ident_string(bytes, start, end), end)
+        }
+        None => (String::new(), start),
+    }
+}
+
+fn parse_quoted(bytes: &[u8], start: usize, quote: u8) -> (String, usize) {
+    let end = (start..bytes.len())
+        .find(|i| bytes.get(*i) == Some(&quote))
+        .unwrap_or(bytes.len());
+    let value = ident_string(bytes, start, end);
+    let after = if end < bytes.len() { end + 1 } else { end };
+    (value, after)
+}
+
+fn skip_whitespace(bytes: &[u8], start: usize) -> usize {
+    (start..bytes.len())
+        .find(|i| !matches!(bytes.get(*i), Some(b' ' | b'\t' | b'\n' | b'\r')))
+        .unwrap_or(bytes.len())
 }
 
 fn scan_ident(bytes: &[u8], start: usize) -> usize {
@@ -243,24 +467,150 @@ fn scan_ident(bytes: &[u8], start: usize) -> usize {
         .map_or(bytes.len(), |(i, _)| i)
 }
 
+fn ident_string(bytes: &[u8], start: usize, end: usize) -> String {
+    bytes
+        .get(start..end)
+        .and_then(|s| std::str::from_utf8(s).ok())
+        .unwrap_or("")
+        .to_owned()
+}
+
 fn is_ident_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'-' || b == b'_'
 }
 
-fn find_matching(this: &Value, pattern: &SelectorPattern, heap: &Heap) -> Option<Value> {
-    let root_id = object_id_of(this)?;
-    walk_descendants(root_id, pattern, heap)
-}
-
-fn walk_descendants(node_id: ObjectId, pattern: &SelectorPattern, heap: &Heap) -> Option<Value> {
-    let children = element_children(node_id, heap);
+fn find_first_descendant_matching(
+    root: ObjectId,
+    list: &SelectorList,
+    heap: &Heap,
+) -> Option<Value> {
+    let children = element_children(root, heap);
     children.iter().find_map(|child_id| {
-        if matches_pattern(*child_id, pattern, heap) {
+        if matches_selector_list(*child_id, list, heap) {
             Some(Value::Object(*child_id))
         } else {
-            walk_descendants(*child_id, pattern, heap)
+            find_first_descendant_matching(*child_id, list, heap)
         }
     })
+}
+
+fn matches_selector_list(element_id: ObjectId, list: &SelectorList, heap: &Heap) -> bool {
+    list.selectors
+        .iter()
+        .any(|sel| matches_complex_selector(element_id, sel, heap))
+}
+
+fn matches_complex_selector(candidate_id: ObjectId, sel: &ComplexSelector, heap: &Heap) -> bool {
+    let Some(last_idx) = sel.compounds.len().checked_sub(1) else {
+        return false;
+    };
+    let Some(last_compound) = sel.compounds.get(last_idx) else {
+        return false;
+    };
+    if !matches_compound(candidate_id, last_compound, heap) {
+        return false;
+    }
+    (0..last_idx)
+        .rev()
+        .try_fold(candidate_id, |current, i| {
+            let combinator = sel.combinators.get(i)?;
+            let target_compound = sel.compounds.get(i)?;
+            match combinator {
+                Combinator::Child => {
+                    let parent_id = parent_element_id(current, heap)?;
+                    matches_compound(parent_id, target_compound, heap).then_some(parent_id)
+                }
+                Combinator::Descendant => walk_ancestors_find_match(current, target_compound, heap),
+            }
+        })
+        .is_some()
+}
+
+fn matches_compound(node_id: ObjectId, compound: &CompoundSelector, heap: &Heap) -> bool {
+    let Some(object) = heap.object(node_id) else {
+        return false;
+    };
+    let tag_ok = compound
+        .tag
+        .as_ref()
+        .is_none_or(|want| string_property(object, "tagName").eq_ignore_ascii_case(want));
+    let id_ok = compound
+        .id
+        .as_ref()
+        .is_none_or(|want| string_property(object, "id") == *want);
+    let class_value = string_property(object, "className");
+    let class_ok = compound.classes.iter().all(|want| {
+        class_value
+            .split_ascii_whitespace()
+            .any(|present| present == want)
+    });
+    let attrs_ok = compound
+        .attributes
+        .iter()
+        .all(|am| matches_attribute(object, am, heap));
+    tag_ok && id_ok && class_ok && attrs_ok
+}
+
+fn matches_attribute(element: &Object, am: &AttributeMatch, heap: &Heap) -> bool {
+    let Some(attrs_id) = attributes_id_of(element) else {
+        return false;
+    };
+    let Some(attrs) = heap.object(attrs_id) else {
+        return false;
+    };
+    let stored = attrs.get(&am.name).and_then(|v| match v {
+        Value::String(s) => Some(s.clone()),
+        Value::Undefined
+        | Value::Null
+        | Value::Boolean(_)
+        | Value::Number(_)
+        | Value::Object(_)
+        | Value::Function(_)
+        | Value::Native(_)
+        | Value::Promise(_) => None,
+    });
+    match (am.operator, stored, &am.value) {
+        (AttrOperator::Exists, Some(_), _) => true,
+        (AttrOperator::Equals, Some(actual), Some(want)) => actual == *want,
+        (AttrOperator::Contains, Some(actual), Some(want)) => actual.contains(want.as_str()),
+        (AttrOperator::StartsWith, Some(actual), Some(want)) => actual.starts_with(want.as_str()),
+        (AttrOperator::EndsWith, Some(actual), Some(want)) => actual.ends_with(want.as_str()),
+        (AttrOperator::Exists, None, _)
+        | (
+            AttrOperator::Equals
+            | AttrOperator::Contains
+            | AttrOperator::StartsWith
+            | AttrOperator::EndsWith,
+            None | Some(_),
+            None | Some(_),
+        ) => false,
+    }
+}
+
+fn parent_element_id(node_id: ObjectId, heap: &Heap) -> Option<ObjectId> {
+    let obj = heap.object(node_id)?;
+    obj.get("__parent__").and_then(|v| match v {
+        Value::Object(id) => Some(*id),
+        Value::Undefined
+        | Value::Null
+        | Value::Boolean(_)
+        | Value::Number(_)
+        | Value::String(_)
+        | Value::Function(_)
+        | Value::Native(_)
+        | Value::Promise(_) => None,
+    })
+}
+
+fn walk_ancestors_find_match(
+    start_id: ObjectId,
+    compound: &CompoundSelector,
+    heap: &Heap,
+) -> Option<ObjectId> {
+    std::iter::successors(parent_element_id(start_id, heap), |id| {
+        parent_element_id(*id, heap)
+    })
+    .find(|id| matches_compound(*id, compound, heap))
 }
 
 fn element_children(node_id: ObjectId, heap: &Heap) -> Vec<ObjectId> {
@@ -290,26 +640,6 @@ fn array_length(array: &Object) -> u32 {
     }
 }
 
-fn matches_pattern(node_id: ObjectId, pattern: &SelectorPattern, heap: &Heap) -> bool {
-    let Some(object) = heap.object(node_id) else {
-        return false;
-    };
-    let tag_ok = pattern
-        .tag
-        .as_ref()
-        .is_none_or(|want| string_property(object, "tagName").eq_ignore_ascii_case(want));
-    let id_ok = pattern
-        .id
-        .as_ref()
-        .is_none_or(|want| string_property(object, "id") == *want);
-    let class_ok = pattern.class.as_ref().is_none_or(|want| {
-        string_property(object, "className")
-            .split_ascii_whitespace()
-            .any(|c| c == want)
-    });
-    tag_ok && id_ok && class_ok
-}
-
 fn string_property(object: &Object, key: &str) -> String {
     match object.get(key) {
         Some(Value::String(s)) => s.clone(),
@@ -321,18 +651,25 @@ fn string_property(object: &Object, key: &str) -> String {
 /// from the document root.
 #[must_use]
 pub fn find_first_descendant(root: ObjectId, pattern_source: &str, heap: &Heap) -> Option<Value> {
-    let pattern = parse_simple_selector(pattern_source);
-    walk_descendants(root, &pattern, heap)
+    let list = parse_selector_list(pattern_source);
+    find_first_descendant_matching(root, &list, heap)
 }
 
 /// Public helper for `document.getElementById`.
 #[must_use]
 pub fn find_by_id(root: ObjectId, id: &str, heap: &Heap) -> Option<Value> {
-    let pattern = SelectorPattern {
+    let compound = CompoundSelector {
         id: Some(id.to_owned()),
-        ..SelectorPattern::default()
+        ..CompoundSelector::default()
     };
-    walk_descendants(root, &pattern, heap)
+    let complex = ComplexSelector {
+        compounds: vec![compound],
+        combinators: Vec::new(),
+    };
+    let list = SelectorList {
+        selectors: vec![complex],
+    };
+    find_first_descendant_matching(root, &list, heap)
 }
 
 /// `Element.appendChild(child)` (v0.6.1): append `child` to
