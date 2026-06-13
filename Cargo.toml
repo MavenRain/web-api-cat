@@ -1,8 +1,8 @@
 [package]
 name = "web-api-cat"
-version = "0.7.2"
+version = "0.7.3"
 edition = "2024"
-description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.2 closes the loop on inline `style=\"...\"`: build_element parses the attribute at construction time into camelCase keys on the element's `style` Object (so `<div style=\"font-size: 14px\">` gives `el.style.fontSize === '14px'`), and `extract_document` serialises the post-eval `style` Object back into a kebab-case `style` attribute on the dom-cat element (so `el.style.color = 'blue'` reaches layout-cat / paint-cat through the standard attribute channel).  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.3 unlocks HTTPS in `fetch`: bumps net-cat from 0.1 to 0.3 with the `tls` feature enabled (rustls + webpki-roots + ring as the pure-Rust crypto provider, no C toolchain).  `https://` URLs now flow through the same code path as `http://`, and net-cat 0.3's chunked-transfer decoding + cross-origin redirect Cookie/Authorization stripping come along for the ride.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
 license = "MIT OR Apache-2.0"
 keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
 categories = ["web-programming"]
@@ -10,7 +10,7 @@ categories = ["web-programming"]
 [dependencies]
 boa-cat = "0.7"
 html-cat = "0.1"
-net-cat = "0.1"
+net-cat = { version = "0.3", features = ["tls"] }
 dom-cat = "0.1"
 
 [dev-dependencies]

@@ -19,11 +19,21 @@
 //!
 //! v0 limitations:
 //!
-//! - Plain HTTP only (`https://` returns a rejected Promise).
 //! - `GET` requests only; body / method deferred.
 //! - The underlying transport is still synchronous; the Promise
 //!   wrapping is purely a shape change at the boundary so the
 //!   engine's existing `.then` / `await` dispatch works.
+//!
+//! v0.7.3: HTTPS is now supported.  `net-cat` was bumped from
+//! `0.1` to `0.3` with the `tls` feature enabled (rustls +
+//! webpki-roots + ring), so `https://` URLs flow through the same
+//! `perform_fetch` path as `http://` ones.  Cross-origin
+//! `Cookie` / `Authorization` stripping on redirect (net-cat
+//! 0.3) and chunked transfer decoding both come along for the
+//! ride.  Tests in `tests/fetch_promise.rs` stay focused on the
+//! rejected-Promise shape; live HTTPS hits a real endpoint and
+//! is intentionally out of the test surface to keep the suite
+//! offline-deterministic.
 
 use std::collections::BTreeMap;
 
