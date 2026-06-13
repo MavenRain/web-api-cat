@@ -21,17 +21,25 @@
 //!
 //! v0 limitations:
 //!
-//! - No capture phase (bubble only).  `addEventListener(_, _,
-//!   true)` ignores the capture flag.
 //! - No `Event` constructor; scripts pass plain `{ type: 'foo' }`
 //!   objects.  v0.7.5 augments the supplied event with
 //!   `target` / `currentTarget` / `defaultPrevented` /
 //!   `preventDefault` / `stopPropagation` /
 //!   `stopImmediatePropagation`, so scripts written against the
 //!   spec's Event API work without needing the constructor.  A
-//!   future chunk can add `new Event(type)` once the engine grows
-//!   `NewExpression` dispatch on `NativeFn` constructors.
+//!   future chunk can add `new Event(type)` (boa-cat 0.7.2's
+//!   `tests/natives.rs` proved `new SomeNativeFn(args)` already
+//!   works through the engine; the surface is unblocked now).
 //! - No `once` / `passive` / `signal` listener options.
+//!
+//! v0.7.6 adds capture-phase support: `addEventListener` accepts a
+//! third arg (`useCapture: boolean` or `{ capture: boolean }`).
+//! `dispatchEvent` walks three phases per the DOM spec -- CAPTURE
+//! (root -> target's parent, capture listeners only), `AT_TARGET`
+//! (all of target's listeners regardless of phase), BUBBLE
+//! (target's parent -> root, bubble listeners only).  Storage shape
+//! changed: each per-type slot is an array of `{ callback, capture }`
+//! Object entries instead of bare callable Values.
 
 use std::collections::BTreeMap;
 
@@ -45,13 +53,15 @@ use boa_cat::value::{Object, ObjectId};
 /// lives once it has any registered listeners.
 pub const LISTENERS_KEY: &str = "__listeners__";
 
-/// `EventTarget.addEventListener(type, callback)` (v0.7.4): append
-/// `callback` to the listener queue for `type` on `this`.  Lazy:
-/// creates the `__listeners__` Object and the per-type array on
-/// first use.  Duplicate `(type, callback)` pairs ARE inserted
-/// (matches the spec only when the second arg differs by
-/// reference; we keep all dupes for simplicity).  Third
-/// `options` / `useCapture` arg is currently ignored.
+/// `EventTarget.addEventListener(type, callback, options)`
+/// (v0.7.4, capture in v0.7.6): append `callback` to the listener
+/// queue for `type` on `this`, tagged with the capture flag
+/// extracted from `options`.  Lazy: creates the `__listeners__`
+/// Object and the per-type array on first use.  Third arg may be
+/// a `Value::Boolean` (interpreted as `useCapture`) or an
+/// `Value::Object` with a `capture` property; anything else
+/// defaults to `capture = false`.  Other options keys
+/// (`once`/`passive`/`signal`) are ignored.
 ///
 /// # Errors
 ///
@@ -65,15 +75,17 @@ pub fn add_event_listener_impl(
 ) -> EvalResult {
     let event_type = string_arg(&args, 0);
     let callback = args.get(1).cloned().unwrap_or(Value::Undefined);
-    let new_heap = append_listener(&this, &event_type, callback, heap);
+    let capture = parse_capture_arg(&args, &heap);
+    let new_heap = append_listener(&this, &event_type, callback, capture, heap);
     Ok((Outcome::Normal(Value::Undefined), new_heap, fuel))
 }
 
-/// `EventTarget.removeEventListener(type, callback)` (v0.7.4):
-/// drop every queue entry whose Value equals `callback` (via
-/// `Value::PartialEq` -- `Value::Function(id)` equality is by
-/// `FunctionId`; `Value::Native(fn_ptr)` equality is by function
-/// pointer).  No-op when no matching entry exists.
+/// `EventTarget.removeEventListener(type, callback, options)`
+/// (v0.7.4, capture in v0.7.6): drop queue entries whose
+/// `(callback, capture)` pair matches.  Per DOM spec, a listener
+/// added with `useCapture = true` is NOT removed by a call with
+/// `useCapture = false` and vice versa; the third arg is parsed
+/// the same way `addEventListener` parses it.
 ///
 /// # Errors
 ///
@@ -87,7 +99,8 @@ pub fn remove_event_listener_impl(
 ) -> EvalResult {
     let event_type = string_arg(&args, 0);
     let callback = args.get(1).cloned().unwrap_or(Value::Undefined);
-    let new_heap = drop_listener(&this, &event_type, &callback, heap);
+    let capture = parse_capture_arg(&args, &heap);
+    let new_heap = drop_listener(&this, &event_type, &callback, capture, heap);
     Ok((Outcome::Normal(Value::Undefined), new_heap, fuel))
 }
 
@@ -121,22 +134,44 @@ pub fn dispatch_event_impl(args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel
     let (decorated, heap) = decorate_event(&event, target_id, heap);
     let event_type = read_event_type(&decorated, &heap);
     let chain = build_bubble_chain(&this, &heap);
-    let (heap, fuel) = chain.iter().try_fold(
-        (heap, fuel),
-        |(heap, fuel), level| -> Result<_, boa_cat::Error> {
-            if read_bool_flag(&decorated, PROPAGATION_STOPPED_KEY, &heap)
-                || read_bool_flag(&decorated, IMMEDIATE_STOPPED_KEY, &heap)
-            {
-                Ok((heap, fuel))
-            } else {
-                let heap = if let Some(id) = object_id_of(level) {
-                    set_current_target(&decorated, id, heap)
-                } else {
-                    heap
-                };
-                invoke_level_listeners(level, &decorated, &event_type, heap, fuel)
-            }
-        },
+    let ancestors: Vec<Value> = chain.iter().skip(1).cloned().collect();
+    let capture_chain: Vec<Value> = ancestors.iter().rev().cloned().collect();
+    // CAPTURE phase: walk ancestors root -> target's parent, fire
+    // capture-tagged listeners only.
+    let (heap, fuel) = walk_chain(
+        &capture_chain,
+        &decorated,
+        &event_type,
+        ListenerFilter::Capture,
+        heap,
+        fuel,
+    )?;
+    // AT_TARGET phase: fire all of target's listeners in
+    // registration order regardless of phase tag.
+    let (heap, fuel) = if read_bool_flag(&decorated, PROPAGATION_STOPPED_KEY, &heap)
+        || read_bool_flag(&decorated, IMMEDIATE_STOPPED_KEY, &heap)
+    {
+        (heap, fuel)
+    } else {
+        let heap = set_current_target(&decorated, target_id, heap);
+        invoke_level_listeners(
+            &this,
+            &decorated,
+            &event_type,
+            ListenerFilter::Any,
+            heap,
+            fuel,
+        )?
+    };
+    // BUBBLE phase: walk ancestors target's parent -> root, fire
+    // non-capture listeners only.
+    let (heap, fuel) = walk_chain(
+        &ancestors,
+        &decorated,
+        &event_type,
+        ListenerFilter::Bubble,
+        heap,
+        fuel,
     )?;
     let default_prevented = read_bool_flag(&decorated, DEFAULT_PREVENTED_KEY, &heap);
     Ok((
@@ -144,6 +179,37 @@ pub fn dispatch_event_impl(args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel
         heap,
         fuel,
     ))
+}
+
+#[derive(Clone, Copy)]
+enum ListenerFilter {
+    Capture,
+    Bubble,
+    Any,
+}
+
+fn walk_chain(
+    chain: &[Value],
+    event: &Value,
+    event_type: &str,
+    filter: ListenerFilter,
+    heap: Heap,
+    fuel: Fuel,
+) -> Result<(Heap, Fuel), boa_cat::Error> {
+    chain.iter().try_fold((heap, fuel), |(heap, fuel), level| {
+        if read_bool_flag(event, PROPAGATION_STOPPED_KEY, &heap)
+            || read_bool_flag(event, IMMEDIATE_STOPPED_KEY, &heap)
+        {
+            Ok((heap, fuel))
+        } else {
+            let heap = if let Some(id) = object_id_of(level) {
+                set_current_target(event, id, heap)
+            } else {
+                heap
+            };
+            invoke_level_listeners(level, event, event_type, filter, heap, fuel)
+        }
+    })
 }
 
 /// Property key under which the `event.defaultPrevented` flag
@@ -275,7 +341,13 @@ fn read_bool_flag(value: &Value, key: &str, heap: &Heap) -> bool {
         .unwrap_or(false)
 }
 
-fn append_listener(this: &Value, event_type: &str, callback: Value, heap: Heap) -> Heap {
+fn append_listener(
+    this: &Value,
+    event_type: &str,
+    callback: Value,
+    capture: bool,
+    heap: Heap,
+) -> Heap {
     let Some(element_id) = object_id_of(this) else {
         return heap;
     };
@@ -287,17 +359,24 @@ fn append_listener(this: &Value, event_type: &str, callback: Value, heap: Heap) 
         return heap;
     };
     let (array_id, heap) = resolve_or_create_type_array(listeners_id, &listeners, event_type, heap);
+    let (entry_value, heap) = make_listener_entry(callback, capture, heap);
     let Some(array) = heap.object(array_id).cloned() else {
         return heap;
     };
     let length = array_length(&array);
     let updated = array
-        .with(format!("{length}"), callback)
+        .with(format!("{length}"), entry_value)
         .with("length".to_owned(), Value::Number(f64::from(length + 1)));
     heap.store_object(array_id, updated).unwrap_or_else(|h| h)
 }
 
-fn drop_listener(this: &Value, event_type: &str, callback: &Value, heap: Heap) -> Heap {
+fn drop_listener(
+    this: &Value,
+    event_type: &str,
+    callback: &Value,
+    capture: bool,
+    heap: Heap,
+) -> Heap {
     let Some(element_id) = object_id_of(this) else {
         return heap;
     };
@@ -319,7 +398,10 @@ fn drop_listener(this: &Value, event_type: &str, callback: &Value, heap: Heap) -
     let length = array_length(&array);
     let remaining: Vec<Value> = (0..length)
         .filter_map(|i| array.get(&format!("{i}")).cloned())
-        .filter(|v| v != callback)
+        .filter(|entry| {
+            let (entry_cb, entry_capture) = unwrap_listener_entry(entry, &heap);
+            !(entry_cb == *callback && entry_capture == capture)
+        })
         .collect();
     let new_length = u32::try_from(remaining.len()).unwrap_or(u32::MAX);
     let pairs: BTreeMap<String, Value> = remaining
@@ -339,14 +421,17 @@ fn invoke_level_listeners(
     level: &Value,
     event: &Value,
     event_type: &str,
+    filter: ListenerFilter,
     heap: Heap,
     fuel: Fuel,
 ) -> Result<(Heap, Fuel), boa_cat::Error> {
     let listeners = collect_listeners(level, event_type, &heap);
     listeners
         .into_iter()
-        .try_fold((heap, fuel), |(heap, fuel), callback| {
-            if read_bool_flag(event, IMMEDIATE_STOPPED_KEY, &heap) {
+        .try_fold((heap, fuel), |(heap, fuel), (callback, capture)| {
+            if read_bool_flag(event, IMMEDIATE_STOPPED_KEY, &heap)
+                || !filter_matches(filter, capture)
+            {
                 Ok((heap, fuel))
             } else {
                 let (_outcome, heap, fuel) = boa_cat::expression::call_function(
@@ -361,7 +446,15 @@ fn invoke_level_listeners(
         })
 }
 
-fn collect_listeners(level: &Value, event_type: &str, heap: &Heap) -> Vec<Value> {
+fn filter_matches(filter: ListenerFilter, capture: bool) -> bool {
+    match filter {
+        ListenerFilter::Capture => capture,
+        ListenerFilter::Bubble => !capture,
+        ListenerFilter::Any => true,
+    }
+}
+
+fn collect_listeners(level: &Value, event_type: &str, heap: &Heap) -> Vec<(Value, bool)> {
     let Some(element_id) = object_id_of(level) else {
         return Vec::new();
     };
@@ -383,7 +476,72 @@ fn collect_listeners(level: &Value, event_type: &str, heap: &Heap) -> Vec<Value>
     let length = array_length(array);
     (0..length)
         .filter_map(|i| array.get(&format!("{i}")).cloned())
+        .map(|entry| unwrap_listener_entry(&entry, heap))
         .collect()
+}
+
+fn make_listener_entry(callback: Value, capture: bool, heap: Heap) -> (Value, Heap) {
+    let props: BTreeMap<String, Value> = [
+        ("callback".to_owned(), callback),
+        ("capture".to_owned(), Value::Boolean(capture)),
+    ]
+    .into_iter()
+    .collect();
+    let (id, heap) = heap.alloc_object(Object::from_properties(props));
+    (Value::Object(id), heap)
+}
+
+fn unwrap_listener_entry(entry: &Value, heap: &Heap) -> (Value, bool) {
+    let Some(entry_id) = object_id_of(entry) else {
+        return (entry.clone(), false);
+    };
+    let Some(obj) = heap.object(entry_id) else {
+        return (entry.clone(), false);
+    };
+    let callback = obj.get("callback").cloned().unwrap_or(Value::Undefined);
+    let capture = obj
+        .get("capture")
+        .and_then(|v| match v {
+            Value::Boolean(b) => Some(*b),
+            Value::Undefined
+            | Value::Null
+            | Value::Number(_)
+            | Value::String(_)
+            | Value::Object(_)
+            | Value::Function(_)
+            | Value::Native(_)
+            | Value::Promise(_) => None,
+        })
+        .unwrap_or(false);
+    (callback, capture)
+}
+
+fn parse_capture_arg(args: &[Value], heap: &Heap) -> bool {
+    args.get(2).is_some_and(|v| match v {
+        Value::Boolean(b) => *b,
+        Value::Object(id) => heap
+            .object(*id)
+            .and_then(|obj| obj.get("capture"))
+            .and_then(|val| match val {
+                Value::Boolean(b) => Some(*b),
+                Value::Undefined
+                | Value::Null
+                | Value::Number(_)
+                | Value::String(_)
+                | Value::Object(_)
+                | Value::Function(_)
+                | Value::Native(_)
+                | Value::Promise(_) => None,
+            })
+            .unwrap_or(false),
+        Value::Undefined
+        | Value::Null
+        | Value::Number(_)
+        | Value::String(_)
+        | Value::Function(_)
+        | Value::Native(_)
+        | Value::Promise(_) => false,
+    })
 }
 
 fn build_bubble_chain(target: &Value, heap: &Heap) -> Vec<Value> {

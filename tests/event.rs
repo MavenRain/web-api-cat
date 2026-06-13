@@ -377,6 +377,153 @@ fn prevent_default_does_not_affect_bubble() -> Result<(), Error> {
 }
 
 #[test]
+fn capture_listener_on_parent_fires_before_target_listener() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='parent'><span id='child'>x</span></div></body></html>",
+        "let trace = '';
+        const child = document.getElementById('child');
+        const parent = document.getElementById('parent');
+        parent.addEventListener('click', () => { trace = trace + 'pc'; }, true);
+        child.addEventListener('click', () => { trace = trace + 'c'; });
+        child.dispatchEvent({ type: 'click' });
+        trace",
+    )?;
+    matches!(value, Value::String(ref s) if s == "pcc")
+        .then_some(())
+        .ok_or_else(|| fail("expected parent capture listener to fire BEFORE target listener"))
+}
+
+#[test]
+fn bubble_listener_on_parent_fires_after_target_listener() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='parent'><span id='child'>x</span></div></body></html>",
+        "let trace = '';
+        const child = document.getElementById('child');
+        const parent = document.getElementById('parent');
+        parent.addEventListener('click', () => { trace = trace + 'pb'; });
+        child.addEventListener('click', () => { trace = trace + 'c'; });
+        child.dispatchEvent({ type: 'click' });
+        trace",
+    )?;
+    matches!(value, Value::String(ref s) if s == "cpb")
+        .then_some(())
+        .ok_or_else(|| fail("expected child target listener BEFORE parent bubble listener"))
+}
+
+#[test]
+fn capture_and_bubble_listeners_on_same_parent_both_fire() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='parent'><span id='child'>x</span></div></body></html>",
+        "let trace = '';
+        const child = document.getElementById('child');
+        const parent = document.getElementById('parent');
+        parent.addEventListener('click', () => { trace = trace + 'pc'; }, true);
+        parent.addEventListener('click', () => { trace = trace + 'pb'; });
+        child.addEventListener('click', () => { trace = trace + 'c'; });
+        child.dispatchEvent({ type: 'click' });
+        trace",
+    )?;
+    matches!(value, Value::String(ref s) if s == "pccpb")
+        .then_some(())
+        .ok_or_else(|| fail("expected order: parent capture, target, parent bubble (PCCpb)"))
+}
+
+#[test]
+fn capture_via_options_object() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='parent'><span id='child'>x</span></div></body></html>",
+        "let trace = '';
+        const child = document.getElementById('child');
+        const parent = document.getElementById('parent');
+        parent.addEventListener('click', () => { trace = trace + 'pc'; }, { capture: true });
+        child.addEventListener('click', () => { trace = trace + 'c'; });
+        child.dispatchEvent({ type: 'click' });
+        trace",
+    )?;
+    matches!(value, Value::String(ref s) if s == "pcc")
+        .then_some(())
+        .ok_or_else(|| fail("expected { capture: true } option to register as capture listener"))
+}
+
+#[test]
+fn stop_propagation_in_capture_phase_skips_target_and_bubble() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='parent'><span id='child'>x</span></div></body></html>",
+        "let trace = '';
+        const child = document.getElementById('child');
+        const parent = document.getElementById('parent');
+        parent.addEventListener('click', (e) => { trace = trace + 'pc'; e.stopPropagation(); }, true);
+        child.addEventListener('click', () => { trace = trace + 'c'; });
+        parent.addEventListener('click', () => { trace = trace + 'pb'; });
+        child.dispatchEvent({ type: 'click' });
+        trace",
+    )?;
+    matches!(value, Value::String(ref s) if s == "pc")
+        .then_some(())
+        .ok_or_else(|| {
+            fail("expected stopPropagation in capture to skip both AT_TARGET and BUBBLE phases")
+        })
+}
+
+#[test]
+fn target_capture_listener_fires_at_target_phase_alongside_bubble() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='host'></div></body></html>",
+        "let trace = '';
+        const host = document.getElementById('host');
+        host.addEventListener('click', () => { trace = trace + 'a'; }, true);
+        host.addEventListener('click', () => { trace = trace + 'b'; });
+        host.dispatchEvent({ type: 'click' });
+        trace",
+    )?;
+    matches!(value, Value::String(ref s) if s == "ab")
+        .then_some(())
+        .ok_or_else(|| {
+            fail("expected target's capture+bubble listeners to fire in registration order")
+        })
+}
+
+#[test]
+fn remove_event_listener_respects_capture_flag() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='host'></div></body></html>",
+        "let count = 0;
+        const host = document.getElementById('host');
+        const handler = () => { count = count + 1; };
+        host.addEventListener('click', handler, true);
+        host.dispatchEvent({ type: 'click' });
+        host.removeEventListener('click', handler);
+        host.dispatchEvent({ type: 'click' });
+        count",
+    )?;
+    matches!(value, Value::Number(n) if (n - 2.0).abs() < 1e-9)
+        .then_some(())
+        .ok_or_else(|| {
+            fail("expected remove without capture=true to NOT remove a capture-registered handler")
+        })
+}
+
+#[test]
+fn remove_event_listener_with_matching_capture_drops_it() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='host'></div></body></html>",
+        "let count = 0;
+        const host = document.getElementById('host');
+        const handler = () => { count = count + 1; };
+        host.addEventListener('click', handler, true);
+        host.dispatchEvent({ type: 'click' });
+        host.removeEventListener('click', handler, true);
+        host.dispatchEvent({ type: 'click' });
+        count",
+    )?;
+    matches!(value, Value::Number(n) if (n - 1.0).abs() < 1e-9)
+        .then_some(())
+        .ok_or_else(|| {
+            fail("expected matching (callback, true) removal to drop the capture handler")
+        })
+}
+
+#[test]
 fn prevent_default_is_idempotent() -> Result<(), Error> {
     let value = run(
         "<html><body><div id='host'></div></body></html>",
