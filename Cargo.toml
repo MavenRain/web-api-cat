@@ -1,8 +1,8 @@
 [package]
 name = "web-api-cat"
-version = "0.7.0"
+version = "0.7.1"
 edition = "2024"
-description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.0 opens the Storage chapter: `localStorage` and `sessionStorage` ship as Storage-shaped Objects exposing `getItem` / `setItem` / `removeItem` / `clear` / `key` plus a `length` accessor; the `window` global is now a proper Object whose `document` / `localStorage` / `sessionStorage` properties point at the matching top-level bindings.  Hosts seed pre-eval and read post-eval via `lookup_local_storage` / `seed_storage` / `read_storage_items`, mirroring the v0.4 cookie pattern.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.1 upgrades `fetch(url)` to return a `Promise<Response>` matching the DOM Fetch API shape: success becomes a resolved Promise carrying the response Object; bad URL / argument errors become a rejected Promise with a `TypeError:`-prefixed string reason; `response.text()` returns a resolved `Promise<string>` of the body; `response.json()` is a rejected-stub deferring to `JSON.parse(await r.text())` (ecma-runtime-cat already exposes JSON.parse).  Scripts now use `await fetch(url)` and `fetch(url).then(r => r.text())` end-to-end through the engine's microtask driver.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
 license = "MIT OR Apache-2.0"
 keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
 categories = ["web-programming"]
