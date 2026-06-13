@@ -1,8 +1,8 @@
 [package]
 name = "web-api-cat"
-version = "0.6.9"
+version = "0.7.0"
 edition = "2024"
-description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.6.9 cashes in on the v0.6.8 parent-backref infrastructure: real `Element.outerHTML` setter (splices the parsed fragment into parent.children at this's index, detaches self, sets parent backref on every spliced-in root) plus four sibling/child navigation accessors (`firstElementChild`, `lastElementChild`, `previousElementSibling`, `nextElementSibling`).  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.0 opens the Storage chapter: `localStorage` and `sessionStorage` ship as Storage-shaped Objects exposing `getItem` / `setItem` / `removeItem` / `clear` / `key` plus a `length` accessor; the `window` global is now a proper Object whose `document` / `localStorage` / `sessionStorage` properties point at the matching top-level bindings.  Hosts seed pre-eval and read post-eval via `lookup_local_storage` / `seed_storage` / `read_storage_items`, mirroring the v0.4 cookie pattern.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
 license = "MIT OR Apache-2.0"
 keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
 categories = ["web-programming"]

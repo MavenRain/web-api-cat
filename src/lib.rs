@@ -30,6 +30,7 @@ pub mod extract;
 pub mod fetch;
 pub mod inner_html;
 pub mod install;
+pub mod storage;
 
 pub use cookie::{
     get_document_cookie, install_cookie_accessor, read_cookie_writes, set_document_cookie,
@@ -37,3 +38,7 @@ pub use cookie::{
 pub use error::Error;
 pub use extract::extract_document;
 pub use install::install;
+pub use storage::{
+    build_storage_object, lookup_local_storage, lookup_session_storage, read_storage_items,
+    seed_storage,
+};
