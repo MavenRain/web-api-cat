@@ -204,6 +204,23 @@ fn build_empty_style_object(heap: Heap) -> (Value, Heap) {
     (Value::Object(id), heap)
 }
 
+/// v0.7.2 helper: build a style Object whose properties mirror
+/// the parsed declarations in `inline_text`.  Empty / missing
+/// inline style attributes produce an empty style Object (same as
+/// [`build_empty_style_object`]).  Property names are stored in
+/// camelCase so JS `el.style.fontSize` works; values are
+/// preserved verbatim.  Source-order duplicate properties resolve
+/// last-write-wins via `BTreeMap::insert`.
+fn build_style_object_from_inline(inline_text: &str, heap: Heap) -> (Value, Heap) {
+    let declarations = crate::inline_style::parse_inline_style(inline_text);
+    let props: BTreeMap<String, Value> = declarations
+        .into_iter()
+        .map(|(k, v)| (k, Value::String(v)))
+        .collect();
+    let (id, heap) = heap.alloc_object(Object::from_properties(props));
+    (Value::Object(id), heap)
+}
+
 /// v0.6.3 helper: allocate a `classList` Object holding an
 /// `__element__` backref to `element_id` and the four
 /// `DOMTokenList` natives (`add`, `remove`, `contains`, `toggle`),
@@ -307,7 +324,8 @@ fn build_element(html_element: &HtmlElement, heap: Heap) -> (Value, Heap) {
     let _ = props.insert("children".to_owned(), children_array_value);
     let _ = props.insert("__attributes".to_owned(), attributes_value);
     let _ = props.insert("__parent__".to_owned(), Value::Null);
-    let (style_value, heap) = build_empty_style_object(heap);
+    let inline_style_text = lookup_attribute(&attribute_pairs, "style").unwrap_or_default();
+    let (style_value, heap) = build_style_object_from_inline(&inline_style_text, heap);
     let _ = props.insert("style".to_owned(), style_value);
     let _ = props.insert(
         "getAttribute".to_owned(),

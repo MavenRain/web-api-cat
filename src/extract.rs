@@ -130,7 +130,7 @@ fn string_property(object: &Object, key: &str) -> String {
 }
 
 fn collect_attributes(object: &Object, heap: &Heap) -> Vec<(String, String)> {
-    object
+    let raw: Vec<(String, String)> = object
         .get("__attributes")
         .and_then(object_id_of)
         .and_then(|attrs_id| heap.object(attrs_id))
@@ -151,7 +151,56 @@ fn collect_attributes(object: &Object, heap: &Heap) -> Vec<(String, String)> {
                 })
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let style_value = synthesise_style_attribute(object, heap);
+    apply_style_attribute(raw, style_value)
+}
+
+fn synthesise_style_attribute(object: &Object, heap: &Heap) -> Option<String> {
+    let style_obj = object
+        .get("style")
+        .and_then(object_id_of)
+        .and_then(|style_id| heap.object(style_id))?;
+    let declarations: Vec<(String, String)> = style_obj
+        .properties()
+        .iter()
+        .filter_map(|(name, value)| match value {
+            Value::String(string_value) => Some((name.clone(), string_value.clone())),
+            Value::Undefined
+            | Value::Null
+            | Value::Boolean(_)
+            | Value::Number(_)
+            | Value::Object(_)
+            | Value::Function(_)
+            | Value::Native(_)
+            | Value::Promise(_) => None,
+        })
+        .collect();
+    if declarations.is_empty() {
+        None
+    } else {
+        Some(crate::inline_style::serialize_inline_style(&declarations))
+    }
+}
+
+fn apply_style_attribute(
+    raw: Vec<(String, String)>,
+    style_value: Option<String>,
+) -> Vec<(String, String)> {
+    let stripped: Vec<(String, String)> = raw
+        .into_iter()
+        .filter(|(name, _)| !name.eq_ignore_ascii_case("style"))
+        .collect();
+    style_value.map_or_else(
+        || stripped.clone(),
+        |value| {
+            stripped
+                .iter()
+                .cloned()
+                .chain(std::iter::once(("style".to_owned(), value)))
+                .collect()
+        },
+    )
 }
 
 fn collect_child_values(object: &Object, heap: &Heap) -> Vec<Value> {
