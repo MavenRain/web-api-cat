@@ -61,7 +61,13 @@ pub fn serialize_inline_style(properties: &[(String, String)]) -> String {
         .join("; ")
 }
 
-fn kebab_to_camel(kebab: &str) -> String {
+/// Convert `kebab-case` to `camelCase`.  First segment lowercased
+/// in full; each subsequent dash-separated segment has its first
+/// character upper-cased and the rest lower-cased.  Made `pub`
+/// in v0.7.7 so `crate::document`'s dataset builder can reuse the
+/// algorithm against `data-*` attribute suffixes.
+#[must_use]
+pub fn kebab_to_camel(kebab: &str) -> String {
     kebab
         .split('-')
         .enumerate()

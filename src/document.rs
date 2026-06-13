@@ -93,6 +93,10 @@ pub fn build_blank_element(tag: &str, heap: Heap) -> (Value, Heap) {
     let _ = props.insert("__parent__".to_owned(), Value::Null);
     let (style_value, heap) = build_empty_style_object(heap);
     let _ = props.insert("style".to_owned(), style_value);
+    // v0.7.7: createElement output starts with an empty dataset
+    // since no parsed attributes exist yet.
+    let (dataset_value, heap) = build_dataset_object(&[], heap);
+    let _ = props.insert("dataset".to_owned(), dataset_value);
     let _ = props.insert(
         "getAttribute".to_owned(),
         Value::Native(element::get_attribute_impl),
@@ -213,6 +217,34 @@ fn install_sibling_accessors(element_id: ObjectId, heap: Heap) -> Heap {
 /// chunk targets script-compatibility, not visual styling.
 fn build_empty_style_object(heap: Heap) -> (Value, Heap) {
     let (id, heap) = heap.alloc_object(Object::from_properties(BTreeMap::new()));
+    (Value::Object(id), heap)
+}
+
+/// v0.7.7 helper: build a `dataset` Object snapshotting every
+/// `data-*` attribute in `attribute_pairs` under its camelCase
+/// suffix.  `<div data-user-name="alice">` -> `el.dataset.userName
+/// === 'alice'`.  Bare `data-` (empty suffix) is skipped.
+/// Non-`data-*` attributes are ignored.
+///
+/// Limitation: the dataset is a snapshot at element-build time.
+/// Runtime `setAttribute('data-foo', 'x')` calls do NOT update
+/// the dataset, and `el.dataset.foo = 'x'` does NOT call
+/// `setAttribute`.  In real browsers `dataset` is a live
+/// `DOMStringMap` that proxies through to the attribute store;
+/// this crate doesn't have Proxy support so the v0 compromise is
+/// snapshot semantics with the divergence documented here.
+fn build_dataset_object(attribute_pairs: &[(String, String)], heap: Heap) -> (Value, Heap) {
+    let props: BTreeMap<String, Value> = attribute_pairs
+        .iter()
+        .filter_map(|(name, value)| {
+            let suffix = name.strip_prefix("data-").filter(|s| !s.is_empty())?;
+            Some((
+                crate::inline_style::kebab_to_camel(suffix),
+                Value::String(value.clone()),
+            ))
+        })
+        .collect();
+    let (id, heap) = heap.alloc_object(Object::from_properties(props));
     (Value::Object(id), heap)
 }
 
@@ -339,6 +371,10 @@ fn build_element(html_element: &HtmlElement, heap: Heap) -> (Value, Heap) {
     let inline_style_text = lookup_attribute(&attribute_pairs, "style").unwrap_or_default();
     let (style_value, heap) = build_style_object_from_inline(&inline_style_text, heap);
     let _ = props.insert("style".to_owned(), style_value);
+    // v0.7.7: dataset Object snapshot of all `data-*` attributes
+    // at parse time (camelCase keys).
+    let (dataset_value, heap) = build_dataset_object(&attribute_pairs, heap);
+    let _ = props.insert("dataset".to_owned(), dataset_value);
     let _ = props.insert(
         "getAttribute".to_owned(),
         Value::Native(element::get_attribute_impl),

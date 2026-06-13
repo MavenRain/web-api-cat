@@ -1,8 +1,8 @@
 [package]
 name = "web-api-cat"
-version = "0.7.6"
+version = "0.7.7"
 edition = "2024"
-description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.6 adds capture-phase support to the event system: `addEventListener(type, callback, useCapture)` / `addEventListener(type, callback, { capture: true })` register a capture listener; `dispatchEvent` now walks three spec-mandated phases (CAPTURE root->target's-parent, AT_TARGET, BUBBLE target's-parent->root).  `removeEventListener` respects the capture flag for matching.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.7 adds `Element.dataset`: a snapshot Object on each parsed element whose properties are the camelCase suffixes of all `data-*` attributes.  `<div data-user-name='alice'>` becomes `el.dataset.userName === 'alice'`.  `createElement` output starts with an empty dataset.  Snapshot semantics: runtime `setAttribute('data-foo', 'x')` and `el.dataset.foo = 'x'` don't sync to each other (no Proxy support).  `inline_style::kebab_to_camel` promoted to `pub` for the dataset builder.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
 license = "MIT OR Apache-2.0"
 keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
 categories = ["web-programming"]
