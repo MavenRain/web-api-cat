@@ -26,6 +26,7 @@ pub mod cookie;
 pub mod document;
 pub mod element;
 pub mod error;
+pub mod event;
 pub mod extract;
 pub mod fetch;
 pub mod inline_style;

@@ -127,6 +127,18 @@ pub fn build_blank_element(tag: &str, heap: Heap) -> (Value, Heap) {
     );
     let _ = props.insert("cloneNode".to_owned(), Value::Native(clone_node_impl));
     let _ = props.insert("remove".to_owned(), Value::Native(element::remove_impl));
+    let _ = props.insert(
+        "addEventListener".to_owned(),
+        Value::Native(crate::event::add_event_listener_impl),
+    );
+    let _ = props.insert(
+        "removeEventListener".to_owned(),
+        Value::Native(crate::event::remove_event_listener_impl),
+    );
+    let _ = props.insert(
+        "dispatchEvent".to_owned(),
+        Value::Native(crate::event::dispatch_event_impl),
+    );
     let (id, heap) = heap.alloc_object(Object::from_properties(props));
     let heap = install_class_list(id, heap);
     let heap = install_parent_accessors(id, heap);
@@ -361,6 +373,18 @@ fn build_element(html_element: &HtmlElement, heap: Heap) -> (Value, Heap) {
     );
     let _ = props.insert("cloneNode".to_owned(), Value::Native(clone_node_impl));
     let _ = props.insert("remove".to_owned(), Value::Native(element::remove_impl));
+    let _ = props.insert(
+        "addEventListener".to_owned(),
+        Value::Native(crate::event::add_event_listener_impl),
+    );
+    let _ = props.insert(
+        "removeEventListener".to_owned(),
+        Value::Native(crate::event::remove_event_listener_impl),
+    );
+    let _ = props.insert(
+        "dispatchEvent".to_owned(),
+        Value::Native(crate::event::dispatch_event_impl),
+    );
     let (id, heap) = heap.alloc_object(Object::from_properties(props));
     let heap = children_values.iter().fold(heap, |heap, child| {
         element::set_parent_backref(child, id, heap)
