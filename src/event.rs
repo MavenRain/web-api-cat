@@ -131,7 +131,14 @@ pub fn dispatch_event_impl(args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel
     let Some(target_id) = object_id_of(&this) else {
         return Ok((Outcome::Normal(Value::Boolean(true)), heap, fuel));
     };
-    let (decorated, heap) = decorate_event(&event, target_id, heap);
+    // v0.7.9: decorate the user's event Object in place so post-
+    // dispatch reads of `defaultPrevented` etc. on the caller's
+    // reference reflect what happened during the bubble walk.
+    // Plain `{type: 'foo'}` objects gain the spec slots; properly-
+    // constructed `new Event(type)` objects get their stop / target
+    // slots reset for this dispatch.
+    let heap = decorate_event_in_place(&event, target_id, heap);
+    let decorated = event;
     let event_type = read_event_type(&decorated, &heap);
     let chain = build_bubble_chain(&this, &heap);
     let ancestors: Vec<Value> = chain.iter().skip(1).cloned().collect();
@@ -267,38 +274,162 @@ pub fn stop_immediate_propagation_impl(
     Ok((Outcome::Normal(Value::Undefined), heap, fuel))
 }
 
-fn decorate_event(event: &Value, target_id: ObjectId, heap: Heap) -> (Value, Heap) {
-    let user_props: BTreeMap<String, Value> = object_id_of(event)
-        .and_then(|id| heap.object(id))
-        .map(|obj| {
-            obj.properties()
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect()
-        })
-        .unwrap_or_default();
-    let decoration = [
-        ("target".to_owned(), Value::Object(target_id)),
-        ("currentTarget".to_owned(), Value::Object(target_id)),
-        (DEFAULT_PREVENTED_KEY.to_owned(), Value::Boolean(false)),
-        (PROPAGATION_STOPPED_KEY.to_owned(), Value::Boolean(false)),
-        (IMMEDIATE_STOPPED_KEY.to_owned(), Value::Boolean(false)),
-        (
+fn decorate_event_in_place(event: &Value, target_id: ObjectId, heap: Heap) -> Heap {
+    let Some(event_id) = object_id_of(event) else {
+        return heap;
+    };
+    let Some(obj) = heap.object(event_id).cloned() else {
+        return heap;
+    };
+    let updated = obj
+        .with("target".to_owned(), Value::Object(target_id))
+        .with("currentTarget".to_owned(), Value::Object(target_id))
+        .with(DEFAULT_PREVENTED_KEY.to_owned(), Value::Boolean(false))
+        .with(PROPAGATION_STOPPED_KEY.to_owned(), Value::Boolean(false))
+        .with(IMMEDIATE_STOPPED_KEY.to_owned(), Value::Boolean(false))
+        .with(
             "preventDefault".to_owned(),
             Value::Native(prevent_default_impl),
-        ),
-        (
+        )
+        .with(
             "stopPropagation".to_owned(),
             Value::Native(stop_propagation_impl),
-        ),
-        (
+        )
+        .with(
             "stopImmediatePropagation".to_owned(),
             Value::Native(stop_immediate_propagation_impl),
-        ),
-    ];
-    let combined: BTreeMap<String, Value> = user_props.into_iter().chain(decoration).collect();
-    let (id, heap) = heap.alloc_object(Object::from_properties(combined));
+        );
+    heap.store_object(event_id, updated).unwrap_or_else(|h| h)
+}
+
+/// `new Event(type, options)` constructor (v0.7.9).  Allocates a
+/// fresh Event-shaped Object with `type` from `args[0]`,
+/// `bubbles` / `cancelable` / `composed` from the optional
+/// `options` Object (each defaults to `false`), `defaultPrevented`
+/// false, `target` and `currentTarget` null, and the three
+/// method bindings (`preventDefault`, `stopPropagation`,
+/// `stopImmediatePropagation`).  Also bound as a global, so plain
+/// `Event('click')` call form yields the same Object as
+/// `new Event('click')` -- boa-cat's `construct` discards the
+/// engine-allocated `this` when the `NativeFn` returns an Object.
+///
+/// # Errors
+///
+/// Never returns `Err`.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn event_constructor_impl(
+    args: Vec<Value>,
+    _this: Value,
+    heap: Heap,
+    fuel: Fuel,
+) -> EvalResult {
+    let event_type = string_arg(&args, 0);
+    let options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let (bubbles, cancelable, composed) = parse_event_options(&options, &heap);
+    let (event_value, heap) = build_event_object_value(
+        &event_type,
+        bubbles,
+        cancelable,
+        composed,
+        Value::Null,
+        heap,
+    );
+    Ok((Outcome::Normal(event_value), heap, fuel))
+}
+
+/// `new CustomEvent(type, options)` constructor (v0.7.9).
+/// Same shape as [`event_constructor_impl`] but reads the
+/// `detail` field from `options` (defaults to `null`) and
+/// surfaces it on the resulting Object's `detail` slot.
+///
+/// # Errors
+///
+/// Never returns `Err`.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn custom_event_constructor_impl(
+    args: Vec<Value>,
+    _this: Value,
+    heap: Heap,
+    fuel: Fuel,
+) -> EvalResult {
+    let event_type = string_arg(&args, 0);
+    let options = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let (bubbles, cancelable, composed) = parse_event_options(&options, &heap);
+    let detail = read_options_field(&options, "detail", &heap).unwrap_or(Value::Null);
+    let (event_value, heap) =
+        build_event_object_value(&event_type, bubbles, cancelable, composed, detail, heap);
+    Ok((Outcome::Normal(event_value), heap, fuel))
+}
+
+fn build_event_object_value(
+    event_type: &str,
+    bubbles: bool,
+    cancelable: bool,
+    composed: bool,
+    detail: Value,
+    heap: Heap,
+) -> (Value, Heap) {
+    let mut props = BTreeMap::new();
+    let _ = props.insert("type".to_owned(), Value::String(event_type.to_owned()));
+    let _ = props.insert("bubbles".to_owned(), Value::Boolean(bubbles));
+    let _ = props.insert("cancelable".to_owned(), Value::Boolean(cancelable));
+    let _ = props.insert("composed".to_owned(), Value::Boolean(composed));
+    let _ = props.insert(DEFAULT_PREVENTED_KEY.to_owned(), Value::Boolean(false));
+    let _ = props.insert("target".to_owned(), Value::Null);
+    let _ = props.insert("currentTarget".to_owned(), Value::Null);
+    let _ = props.insert("detail".to_owned(), detail);
+    let _ = props.insert(PROPAGATION_STOPPED_KEY.to_owned(), Value::Boolean(false));
+    let _ = props.insert(IMMEDIATE_STOPPED_KEY.to_owned(), Value::Boolean(false));
+    let _ = props.insert(
+        "preventDefault".to_owned(),
+        Value::Native(prevent_default_impl),
+    );
+    let _ = props.insert(
+        "stopPropagation".to_owned(),
+        Value::Native(stop_propagation_impl),
+    );
+    let _ = props.insert(
+        "stopImmediatePropagation".to_owned(),
+        Value::Native(stop_immediate_propagation_impl),
+    );
+    let (id, heap) = heap.alloc_object(Object::from_properties(props));
     (Value::Object(id), heap)
+}
+
+fn parse_event_options(options: &Value, heap: &Heap) -> (bool, bool, bool) {
+    let Some(obj_id) = object_id_of(options) else {
+        return (false, false, false);
+    };
+    let Some(obj) = heap.object(obj_id) else {
+        return (false, false, false);
+    };
+    (
+        read_bool_field(obj, "bubbles"),
+        read_bool_field(obj, "cancelable"),
+        read_bool_field(obj, "composed"),
+    )
+}
+
+fn read_bool_field(obj: &Object, key: &str) -> bool {
+    obj.get(key)
+        .and_then(|v| match v {
+            Value::Boolean(b) => Some(*b),
+            Value::Undefined
+            | Value::Null
+            | Value::Number(_)
+            | Value::String(_)
+            | Value::Object(_)
+            | Value::Function(_)
+            | Value::Native(_)
+            | Value::Promise(_) => None,
+        })
+        .unwrap_or(false)
+}
+
+fn read_options_field(options: &Value, key: &str, heap: &Heap) -> Option<Value> {
+    let obj_id = object_id_of(options)?;
+    let obj = heap.object(obj_id)?;
+    obj.get(key).cloned()
 }
 
 fn set_current_target(event: &Value, level_id: ObjectId, heap: Heap) -> Heap {

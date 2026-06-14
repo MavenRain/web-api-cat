@@ -1,8 +1,8 @@
 [package]
 name = "web-api-cat"
-version = "0.7.8"
+version = "0.7.9"
 edition = "2024"
-description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.8 extends `querySelector` from the v0.6.x five-pattern subset to a real CSS selector grammar covering most real-world script usage: comma-separated selector lists; `tag` / `.class` (multiple per compound) / `#id` / `[attr]` / `[attr=val]` / `[attr^=val]` / `[attr$=val]` / `[attr*=val]` / `*`; whitespace (descendant) and `>` (child) combinators.  Reverse-walks the candidate's ancestor chain via the v0.6.8 `__parent__` backref for combinator matching.  Sibling combinators (`+`, `~`) and pseudo-classes deferred.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.9 ships `new Event(type, options)` and `new CustomEvent(type, options)` constructors as global bindings (and the legacy bare-call forms, since boa-cat 0.7.2's NativeFn-as-constructor path supports both).  Dispatch now decorates the user's event Object in place rather than creating a fresh copy, so post-dispatch reads of `defaultPrevented` / `target` / `currentTarget` on the caller's reference reflect what happened during the bubble walk.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
 license = "MIT OR Apache-2.0"
 keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
 categories = ["web-programming"]

@@ -11,6 +11,7 @@ use boa_cat::value::{Cell, Object};
 use html_cat::Document as HtmlDoc;
 
 use crate::document::build as build_document;
+use crate::event::{custom_event_constructor_impl, event_constructor_impl};
 use crate::fetch::fetch_impl;
 use crate::storage::build_storage_object;
 
@@ -38,6 +39,14 @@ pub fn install(env: Env, heap: Heap, html_doc: &HtmlDoc) -> (Env, Heap) {
         ("window", window_value),
         ("localStorage", local_storage_value),
         ("sessionStorage", session_storage_value),
+        // v0.7.9: Event / CustomEvent constructors.  Bound as
+        // `Value::Native(...)` and dispatched through boa-cat's
+        // NativeFn-as-constructor path (verified in boa-cat
+        // 0.7.2's tests/natives.rs), so both `new Event('click')`
+        // and the legacy `Event('click')` call form yield the
+        // same Object.
+        ("Event", Value::Native(event_constructor_impl)),
+        ("CustomEvent", Value::Native(custom_event_constructor_impl)),
     ];
     bindings
         .into_iter()
