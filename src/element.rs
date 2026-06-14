@@ -220,6 +220,12 @@ struct ComplexSelector {
 enum Combinator {
     Descendant,
     Child,
+    /// `a + b` -- v0.7.12.  b's immediately-preceding sibling
+    /// must match a.
+    AdjacentSibling,
+    /// `a ~ b` -- v0.7.12.  Any of b's preceding siblings must
+    /// match a.
+    GeneralSibling,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -275,16 +281,22 @@ fn parse_complex_tail(
             compounds,
             combinators,
         }
-    } else if bytes.get(after_ws) == Some(&b'>') {
-        let after_gt = skip_whitespace(bytes, after_ws + 1);
-        let (compound, end) = parse_compound(bytes, after_gt);
+    } else if matches!(bytes.get(after_ws), Some(b'>' | b'+' | b'~')) {
+        let combinator = match bytes.get(after_ws) {
+            Some(b'>') => Combinator::Child,
+            Some(b'+') => Combinator::AdjacentSibling,
+            Some(b'~') => Combinator::GeneralSibling,
+            Some(_) | None => Combinator::Descendant,
+        };
+        let after_sym = skip_whitespace(bytes, after_ws + 1);
+        let (compound, end) = parse_compound(bytes, after_sym);
         let new_compounds: Vec<CompoundSelector> = compounds
             .into_iter()
             .chain(std::iter::once(compound))
             .collect();
         let new_combinators: Vec<Combinator> = combinators
             .into_iter()
-            .chain(std::iter::once(Combinator::Child))
+            .chain(std::iter::once(combinator))
             .collect();
         parse_complex_tail(bytes, end, new_compounds, new_combinators)
     } else if after_ws > pos {
@@ -316,7 +328,7 @@ fn parse_compound_recursive(
     acc: CompoundSelector,
 ) -> (CompoundSelector, usize) {
     match bytes.get(start) {
-        None | Some(b' ' | b'\t' | b'\n' | b'\r' | b'>' | b',') => (acc, start),
+        None | Some(b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'+' | b'~' | b',') => (acc, start),
         Some(b'*') => parse_compound_recursive(
             bytes,
             start + 1,
@@ -565,6 +577,13 @@ fn matches_complex_selector(candidate_id: ObjectId, sel: &ComplexSelector, heap:
                     matches_compound(parent_id, target_compound, heap).then_some(parent_id)
                 }
                 Combinator::Descendant => walk_ancestors_find_match(current, target_compound, heap),
+                Combinator::AdjacentSibling => {
+                    let prev_id = previous_sibling_id(current, heap)?;
+                    matches_compound(prev_id, target_compound, heap).then_some(prev_id)
+                }
+                Combinator::GeneralSibling => {
+                    walk_previous_siblings_find_match(current, target_compound, heap)
+                }
             }
         })
         .is_some()
@@ -653,6 +672,39 @@ fn walk_ancestors_find_match(
 ) -> Option<ObjectId> {
     std::iter::successors(parent_element_id(start_id, heap), |id| {
         parent_element_id(*id, heap)
+    })
+    .find(|id| matches_compound(*id, compound, heap))
+}
+
+/// v0.7.12 helper: the element immediately before `node_id` in
+/// its parent's children-array Object, or `None` for the first
+/// child / detached node.
+fn previous_sibling_id(node_id: ObjectId, heap: &Heap) -> Option<ObjectId> {
+    let parent_id = parent_element_id(node_id, heap)?;
+    let parent = heap.object(parent_id)?;
+    let children_id = parent.get("children").and_then(object_id_of)?;
+    let children = heap.object(children_id)?;
+    let length = array_length(children);
+    let position = (0..length).find(|i| {
+        children.get(&format!("{i}")).and_then(object_id_of) == Some(node_id)
+    })?;
+    position.checked_sub(1).and_then(|prev_idx| {
+        children
+            .get(&format!("{prev_idx}"))
+            .and_then(object_id_of)
+    })
+}
+
+/// v0.7.12 helper: walk back through `node_id`'s preceding
+/// siblings in document order (closest first) and return the
+/// first one matching `compound`.
+fn walk_previous_siblings_find_match(
+    start_id: ObjectId,
+    compound: &CompoundSelector,
+    heap: &Heap,
+) -> Option<ObjectId> {
+    std::iter::successors(previous_sibling_id(start_id, heap), |id| {
+        previous_sibling_id(*id, heap)
     })
     .find(|id| matches_compound(*id, compound, heap))
 }

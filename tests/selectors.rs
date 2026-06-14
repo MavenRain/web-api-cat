@@ -227,6 +227,154 @@ fn nested_combinator_with_id_anchor() -> Result<(), Error> {
 }
 
 #[test]
+fn adjacent_sibling_matches_immediately_following() -> Result<(), Error> {
+    let value = run(
+        "<html><body>
+            <h2 id='heading'>Title</h2>
+            <p id='lead'>Lead paragraph</p>
+            <p id='body'>Body paragraph</p>
+        </body></html>",
+        "document.querySelector('h2 + p').id",
+    )?;
+    matches!(value, Value::String(ref s) if s == "lead")
+        .then_some(())
+        .ok_or_else(|| fail("expected 'h2 + p' to pick the p immediately after the heading"))
+}
+
+#[test]
+fn adjacent_sibling_skips_non_adjacent() -> Result<(), Error> {
+    let value = run(
+        "<html><body>
+            <h2>heading</h2>
+            <div>spacer</div>
+            <p id='not-adjacent'>p that's not adjacent</p>
+        </body></html>",
+        "document.querySelector('h2 + p') === null ? 'null' : 'not-null'",
+    )?;
+    matches!(value, Value::String(ref s) if s == "null")
+        .then_some(())
+        .ok_or_else(|| fail("expected 'h2 + p' to NOT match a p separated by a div"))
+}
+
+#[test]
+fn adjacent_sibling_with_class_filter() -> Result<(), Error> {
+    let value = run(
+        "<html><body>
+            <h2>heading</h2>
+            <p class='other'>x</p>
+            <h3>another</h3>
+            <p class='target' id='want'>y</p>
+        </body></html>",
+        "document.querySelector('h3 + p.target').id",
+    )?;
+    matches!(value, Value::String(ref s) if s == "want")
+        .then_some(())
+        .ok_or_else(|| fail("expected 'h3 + p.target' to pick the post-h3 p with class target"))
+}
+
+#[test]
+fn general_sibling_matches_non_adjacent_following() -> Result<(), Error> {
+    let value = run(
+        "<html><body>
+            <h2>heading</h2>
+            <div>spacer1</div>
+            <div>spacer2</div>
+            <p id='target'>finally a p</p>
+        </body></html>",
+        "document.querySelector('h2 ~ p').id",
+    )?;
+    matches!(value, Value::String(ref s) if s == "target")
+        .then_some(())
+        .ok_or_else(|| fail("expected 'h2 ~ p' to match p even with intermediate siblings"))
+}
+
+#[test]
+fn general_sibling_does_not_cross_parent_boundary() -> Result<(), Error> {
+    let value = run(
+        "<html><body>
+            <h2>heading</h2>
+            <section><p id='nested'>nested p</p></section>
+        </body></html>",
+        "document.querySelector('h2 ~ p') === null ? 'null' : 'not-null'",
+    )?;
+    matches!(value, Value::String(ref s) if s == "null")
+        .then_some(())
+        .ok_or_else(|| {
+            fail("expected 'h2 ~ p' to NOT cross into section's children (sibling = same parent)")
+        })
+}
+
+#[test]
+fn general_sibling_picks_first_match_in_document_order() -> Result<(), Error> {
+    let value = run(
+        "<html><body>
+            <h2>heading</h2>
+            <p id='first'>first</p>
+            <p id='second'>second</p>
+            <p id='third'>third</p>
+        </body></html>",
+        "document.querySelector('h2 ~ p').id",
+    )?;
+    matches!(value, Value::String(ref s) if s == "first")
+        .then_some(())
+        .ok_or_else(|| {
+            fail("expected querySelector to take the first match in document order")
+        })
+}
+
+#[test]
+fn query_selector_all_with_general_sibling() -> Result<(), Error> {
+    let value = run(
+        "<html><body>
+            <h2>heading</h2>
+            <p>a</p>
+            <p>b</p>
+            <p>c</p>
+        </body></html>",
+        "document.querySelectorAll('h2 ~ p').length",
+    )?;
+    matches!(value, Value::Number(n) if (n - 3.0).abs() < 1e-9)
+        .then_some(())
+        .ok_or_else(|| fail("expected 'h2 ~ p' to match all three following sibling p"))
+}
+
+#[test]
+fn query_selector_all_with_adjacent_sibling() -> Result<(), Error> {
+    let value = run(
+        "<html><body>
+            <h2>h1</h2>
+            <p>p1</p>
+            <h2>h2</h2>
+            <p>p2</p>
+            <h2>h3</h2>
+            <p>p3</p>
+        </body></html>",
+        "document.querySelectorAll('h2 + p').length",
+    )?;
+    matches!(value, Value::Number(n) if (n - 3.0).abs() < 1e-9)
+        .then_some(())
+        .ok_or_else(|| fail("expected three h2+p adjacent-sibling matches"))
+}
+
+#[test]
+fn sibling_combinator_chains_with_descendant() -> Result<(), Error> {
+    let value = run(
+        "<html><body>
+            <section>
+                <h2>title</h2>
+                <p id='want'>scoped</p>
+            </section>
+            <h2>other</h2>
+            <p>not-scoped</p>
+        </body></html>",
+        "document.querySelector('section h2 + p').id",
+    )?;
+    matches!(value, Value::String(ref s) if s == "want")
+        .then_some(())
+        .ok_or_else(|| fail("expected 'section h2 + p' to chain descendant + adjacent-sibling"))
+}
+
+#[test]
 fn no_match_returns_null() -> Result<(), Error> {
     let value = run(
         "<html><body><div></div></body></html>",
