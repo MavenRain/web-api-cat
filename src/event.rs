@@ -230,12 +230,23 @@ const IMMEDIATE_STOPPED_KEY: &str = "__immediate_propagation_stopped__";
 /// `this.defaultPrevented = true`.  No-op if `this` isn't an
 /// Object.  Idempotent.
 ///
+/// v0.7.10 honours the spec's `cancelable` gate: preventDefault
+/// only flips the flag when `this.cancelable === true`.  Plain
+/// object literals (no `cancelable` key) and
+/// `new Event(type)` constructions without `{ cancelable: true }`
+/// land on the false path -- calling preventDefault is a silent
+/// no-op, and `dispatchEvent` returns `true`.
+///
 /// # Errors
 ///
 /// Never returns `Err`.
 #[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
 pub fn prevent_default_impl(_args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
-    let new_heap = set_bool_flag(&this, DEFAULT_PREVENTED_KEY, heap);
+    let new_heap = if read_bool_flag(&this, "cancelable", &heap) {
+        set_bool_flag(&this, DEFAULT_PREVENTED_KEY, heap)
+    } else {
+        heap
+    };
     Ok((Outcome::Normal(Value::Undefined), new_heap, fuel))
 }
 

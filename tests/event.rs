@@ -220,11 +220,11 @@ fn prevent_default_makes_dispatch_event_return_false() -> Result<(), Error> {
         "<html><body><div id='host'></div></body></html>",
         "const host = document.getElementById('host');
         host.addEventListener('click', (e) => { e.preventDefault(); });
-        host.dispatchEvent({ type: 'click' })",
+        host.dispatchEvent({ type: 'click', cancelable: true })",
     )?;
     matches!(value, Value::Boolean(false))
         .then_some(())
-        .ok_or_else(|| fail("expected dispatchEvent to return false after preventDefault"))
+        .ok_or_else(|| fail("expected dispatchEvent to return false after preventDefault on a cancelable event"))
 }
 
 #[test]
@@ -235,7 +235,7 @@ fn prevent_default_sets_default_prevented_flag_on_event() -> Result<(), Error> {
         const host = document.getElementById('host');
         host.addEventListener('click', (e) => { e.preventDefault(); });
         host.addEventListener('click', (e) => { observed = e.defaultPrevented; });
-        host.dispatchEvent({ type: 'click' });
+        host.dispatchEvent({ type: 'click', cancelable: true });
         observed",
     )?;
     matches!(value, Value::Boolean(true))
@@ -533,7 +533,7 @@ fn prevent_default_is_idempotent() -> Result<(), Error> {
             e.preventDefault();
             e.preventDefault();
         });
-        host.dispatchEvent({ type: 'click' })",
+        host.dispatchEvent({ type: 'click', cancelable: true })",
     )?;
     matches!(value, Value::Boolean(false))
         .then_some(())

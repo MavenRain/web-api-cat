@@ -109,13 +109,14 @@ fn dispatching_new_event_fires_listeners() -> Result<(), Error> {
 #[test]
 fn user_reference_sees_default_prevented_after_dispatch() -> Result<(), Error> {
     // v0.7.9 in-place decoration: the user's `e` reference
-    // sees the post-dispatch state of `defaultPrevented`.  This
-    // is the spec-compliant behaviour scripts expect.
+    // sees the post-dispatch state of `defaultPrevented`.  v0.7.10:
+    // cancelable: true is required for preventDefault to actually
+    // flip the flag.
     let value = run(
         "<html><body><div id='host'></div></body></html>",
         "const host = document.getElementById('host');
         host.addEventListener('click', (e) => { e.preventDefault(); });
-        const e = new Event('click');
+        const e = new Event('click', { cancelable: true });
         host.dispatchEvent(e);
         e.defaultPrevented",
     )?;
@@ -147,11 +148,13 @@ fn dispatch_resets_default_prevented_at_entry() -> Result<(), Error> {
     // `e.preventDefault()` is shadowed by the listener pass
     // through the bubble walk.  If no listener calls
     // preventDefault during dispatch, the final flag is false.
+    // v0.7.10: cancelable: true required for the pre-dispatch
+    // preventDefault to actually flip the flag in the first place.
     let value = run(
         "<html><body><div id='host'></div></body></html>",
         "const host = document.getElementById('host');
         host.addEventListener('click', () => {});
-        const e = new Event('click');
+        const e = new Event('click', { cancelable: true });
         e.preventDefault();
         // before dispatch: defaultPrevented is true
         const before = e.defaultPrevented;
@@ -202,6 +205,71 @@ fn dispatching_custom_event_delivers_detail_to_handler() -> Result<(), Error> {
     matches!(value, Value::String(ref s) if s == "alice")
         .then_some(())
         .ok_or_else(|| fail("expected listener to read detail.name from CustomEvent"))
+}
+
+#[test]
+fn prevent_default_is_noop_when_event_is_not_cancelable() -> Result<(), Error> {
+    // v0.7.10 cancelable gate: a default-constructed Event has
+    // cancelable=false; preventDefault should be a silent no-op
+    // and dispatchEvent should still return true.
+    let value = run(
+        "<html><body><div id='host'></div></body></html>",
+        "const host = document.getElementById('host');
+        host.addEventListener('click', (e) => { e.preventDefault(); });
+        host.dispatchEvent(new Event('click'))",
+    )?;
+    matches!(value, Value::Boolean(true))
+        .then_some(())
+        .ok_or_else(|| {
+            fail("expected dispatchEvent to return true when event is not cancelable (preventDefault no-ops)")
+        })
+}
+
+#[test]
+fn prevent_default_works_when_event_is_explicitly_cancelable() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='host'></div></body></html>",
+        "const host = document.getElementById('host');
+        host.addEventListener('click', (e) => { e.preventDefault(); });
+        host.dispatchEvent(new Event('click', { cancelable: true }))",
+    )?;
+    matches!(value, Value::Boolean(false))
+        .then_some(())
+        .ok_or_else(|| {
+            fail("expected dispatchEvent to return false when cancelable=true + preventDefault was called")
+        })
+}
+
+#[test]
+fn default_prevented_stays_false_when_not_cancelable() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='host'></div></body></html>",
+        "const host = document.getElementById('host');
+        host.addEventListener('click', (e) => { e.preventDefault(); });
+        const e = new Event('click');
+        host.dispatchEvent(e);
+        e.defaultPrevented",
+    )?;
+    matches!(value, Value::Boolean(false))
+        .then_some(())
+        .ok_or_else(|| {
+            fail("expected defaultPrevented to stay false on a non-cancelable event")
+        })
+}
+
+#[test]
+fn pre_dispatch_prevent_default_is_noop_when_not_cancelable() -> Result<(), Error> {
+    let value = run(
+        "<html><body></body></html>",
+        "const e = new Event('foo');
+        e.preventDefault();
+        e.defaultPrevented",
+    )?;
+    matches!(value, Value::Boolean(false))
+        .then_some(())
+        .ok_or_else(|| {
+            fail("expected pre-dispatch preventDefault to no-op on a non-cancelable event")
+        })
 }
 
 #[test]
