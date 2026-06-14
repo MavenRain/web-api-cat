@@ -121,6 +121,8 @@ pub fn build_blank_element(tag: &str, heap: Heap) -> (Value, Heap) {
         "querySelectorAll".to_owned(),
         Value::Native(element::query_selector_all_impl),
     );
+    let _ = props.insert("matches".to_owned(), Value::Native(element::matches_impl));
+    let _ = props.insert("closest".to_owned(), Value::Native(element::closest_impl));
     let _ = props.insert(
         "appendChild".to_owned(),
         Value::Native(element::append_child_impl),
@@ -403,6 +405,8 @@ fn build_element(html_element: &HtmlElement, heap: Heap) -> (Value, Heap) {
         "querySelectorAll".to_owned(),
         Value::Native(element::query_selector_all_impl),
     );
+    let _ = props.insert("matches".to_owned(), Value::Native(element::matches_impl));
+    let _ = props.insert("closest".to_owned(), Value::Native(element::closest_impl));
     let _ = props.insert(
         "appendChild".to_owned(),
         Value::Native(element::append_child_impl),

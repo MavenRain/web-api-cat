@@ -317,9 +317,7 @@ fn general_sibling_picks_first_match_in_document_order() -> Result<(), Error> {
     )?;
     matches!(value, Value::String(ref s) if s == "first")
         .then_some(())
-        .ok_or_else(|| {
-            fail("expected querySelector to take the first match in document order")
-        })
+        .ok_or_else(|| fail("expected querySelector to take the first match in document order"))
 }
 
 #[test]

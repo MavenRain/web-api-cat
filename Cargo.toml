@@ -1,8 +1,8 @@
 [package]
 name = "web-api-cat"
-version = "0.7.12"
+version = "0.7.13"
 edition = "2024"
-description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.12 extends the v0.7.8 selector grammar with sibling combinators: `a + b` (adjacent sibling -- b's immediately-preceding sibling matches a) and `a ~ b` (general sibling -- any of b's preceding siblings matches a).  Both walk the parent's children array via the existing `__parent__` backref to compute sibling relationships.  Combines with all existing combinators (`section h2 + p`, etc.) and reaches scripts through both `querySelector` and `querySelectorAll`.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.13 adds `Element.matches(selector)` (predicate against `this`), `Element.closest(selector)` (walks ancestor chain inclusive of self, returns nearest match or null), and three pseudo-classes (`:first-child`, `:last-child`, `:only-child`) reachable through `querySelector` / `querySelectorAll` / `matches` / `closest` -- all reusing the v0.7.8-12 selector machinery.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
 license = "MIT OR Apache-2.0"
 keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
 categories = ["web-programming"]

@@ -178,6 +178,46 @@ pub fn query_selector_impl(args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel
     Ok((outcome, heap, fuel))
 }
 
+/// `Element.matches(selector)` -- v0.7.13.  Returns `true` when
+/// `this` itself matches `selector`; does not walk the descendant
+/// tree.  Selector grammar identical to `querySelector` /
+/// `querySelectorAll` (v0.7.8 / v0.7.11 / v0.7.12).
+///
+/// # Errors
+///
+/// Never returns `Err`; bad inputs return `false`.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn matches_impl(args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
+    let selector = string_arg(&args, 0);
+    let list = parse_selector_list(&selector);
+    let matched = object_id_of(&this).is_some_and(|id| matches_selector_list(id, &list, &heap));
+    Ok((Outcome::Normal(Value::Boolean(matched)), heap, fuel))
+}
+
+/// `Element.closest(selector)` -- v0.7.13.  Walks the
+/// (`this`, parent, grandparent, ...) chain via the v0.6.8
+/// `__parent__` slot and returns the first element matching
+/// `selector`, or `Value::Null` if none.  Per spec, `this` itself
+/// is the first candidate (closest is inclusive of self).
+///
+/// # Errors
+///
+/// Never returns `Err`; no match yields `Value::Null`.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn closest_impl(args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel) -> EvalResult {
+    let selector = string_arg(&args, 0);
+    let list = parse_selector_list(&selector);
+    let result = object_id_of(&this)
+        .and_then(|id| find_closest_matching(id, &list, &heap))
+        .map_or(Value::Null, Value::Object);
+    Ok((Outcome::Normal(result), heap, fuel))
+}
+
+fn find_closest_matching(start_id: ObjectId, list: &SelectorList, heap: &Heap) -> Option<ObjectId> {
+    std::iter::successors(Some(start_id), |id| parent_element_id(*id, heap))
+        .find(|id| matches_selector_list(*id, list, heap))
+}
+
 /// `Element.querySelectorAll(selector)` -- v0.7.11 companion to
 /// `querySelector`.  Walks every descendant in depth-first
 /// pre-order and returns ALL matches as a NodeList-shaped Object
@@ -235,6 +275,19 @@ struct CompoundSelector {
     id: Option<String>,
     classes: Vec<String>,
     attributes: Vec<AttributeMatch>,
+    pseudo_classes: Vec<PseudoClass>,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[allow(clippy::enum_variant_names)]
+enum PseudoClass {
+    /// `:first-child` -- this element has no preceding sibling.
+    FirstChild,
+    /// `:last-child` -- this element has no following sibling.
+    LastChild,
+    /// `:only-child` -- the element is the sole child of its
+    /// parent (both first AND last).
+    OnlyChild,
 }
 
 #[derive(Debug, Clone)]
@@ -322,6 +375,7 @@ fn parse_compound(bytes: &[u8], start: usize) -> (CompoundSelector, usize) {
     parse_compound_recursive(bytes, start, CompoundSelector::default())
 }
 
+#[allow(clippy::too_many_lines)]
 fn parse_compound_recursive(
     bytes: &[u8],
     start: usize,
@@ -329,6 +383,34 @@ fn parse_compound_recursive(
 ) -> (CompoundSelector, usize) {
     match bytes.get(start) {
         None | Some(b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'+' | b'~' | b',') => (acc, start),
+        Some(b':') => {
+            let end = scan_ident(bytes, start + 1);
+            let name = ident_string(bytes, start + 1, end).to_ascii_lowercase();
+            let parsed = match name.as_str() {
+                "first-child" => Some(PseudoClass::FirstChild),
+                "last-child" => Some(PseudoClass::LastChild),
+                "only-child" => Some(PseudoClass::OnlyChild),
+                _other => None,
+            };
+            if let Some(pseudo) = parsed {
+                let new_pseudos: Vec<PseudoClass> = acc
+                    .pseudo_classes
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(pseudo))
+                    .collect();
+                parse_compound_recursive(
+                    bytes,
+                    end,
+                    CompoundSelector {
+                        pseudo_classes: new_pseudos,
+                        ..acc
+                    },
+                )
+            } else {
+                parse_compound_recursive(bytes, end, acc)
+            }
+        }
         Some(b'*') => parse_compound_recursive(
             bytes,
             start + 1,
@@ -593,6 +675,13 @@ fn matches_compound(node_id: ObjectId, compound: &CompoundSelector, heap: &Heap)
     let Some(object) = heap.object(node_id) else {
         return false;
     };
+    let pseudos_ok = compound
+        .pseudo_classes
+        .iter()
+        .all(|p| matches_pseudo_class(node_id, *p, heap));
+    if !pseudos_ok {
+        return false;
+    }
     let tag_ok = compound
         .tag
         .as_ref()
@@ -685,14 +774,11 @@ fn previous_sibling_id(node_id: ObjectId, heap: &Heap) -> Option<ObjectId> {
     let children_id = parent.get("children").and_then(object_id_of)?;
     let children = heap.object(children_id)?;
     let length = array_length(children);
-    let position = (0..length).find(|i| {
-        children.get(&format!("{i}")).and_then(object_id_of) == Some(node_id)
-    })?;
-    position.checked_sub(1).and_then(|prev_idx| {
-        children
-            .get(&format!("{prev_idx}"))
-            .and_then(object_id_of)
-    })
+    let position = (0..length)
+        .find(|i| children.get(&format!("{i}")).and_then(object_id_of) == Some(node_id))?;
+    position
+        .checked_sub(1)
+        .and_then(|prev_idx| children.get(&format!("{prev_idx}")).and_then(object_id_of))
 }
 
 /// v0.7.12 helper: walk back through `node_id`'s preceding
@@ -707,6 +793,39 @@ fn walk_previous_siblings_find_match(
         previous_sibling_id(*id, heap)
     })
     .find(|id| matches_compound(*id, compound, heap))
+}
+
+/// v0.7.13 helper: the element immediately after `node_id` in
+/// its parent's children-array Object, or `None` for the last
+/// child / detached node.  Used by `:last-child` /
+/// `:only-child` pseudo-class checks.
+fn next_sibling_id(node_id: ObjectId, heap: &Heap) -> Option<ObjectId> {
+    let parent_id = parent_element_id(node_id, heap)?;
+    let parent = heap.object(parent_id)?;
+    let children_id = parent.get("children").and_then(object_id_of)?;
+    let children = heap.object(children_id)?;
+    let length = array_length(children);
+    let position = (0..length)
+        .find(|i| children.get(&format!("{i}")).and_then(object_id_of) == Some(node_id))?;
+    children
+        .get(&format!("{}", position + 1))
+        .and_then(object_id_of)
+}
+
+fn matches_pseudo_class(node_id: ObjectId, pseudo: PseudoClass, heap: &Heap) -> bool {
+    // All three pseudo-classes require the candidate to actually
+    // have a parent element -- a detached/root element matches
+    // none of them.
+    if parent_element_id(node_id, heap).is_none() {
+        return false;
+    }
+    match pseudo {
+        PseudoClass::FirstChild => previous_sibling_id(node_id, heap).is_none(),
+        PseudoClass::LastChild => next_sibling_id(node_id, heap).is_none(),
+        PseudoClass::OnlyChild => {
+            previous_sibling_id(node_id, heap).is_none() && next_sibling_id(node_id, heap).is_none()
+        }
+    }
 }
 
 fn element_children(node_id: ObjectId, heap: &Heap) -> Vec<ObjectId> {
