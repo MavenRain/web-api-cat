@@ -224,7 +224,11 @@ fn prevent_default_makes_dispatch_event_return_false() -> Result<(), Error> {
     )?;
     matches!(value, Value::Boolean(false))
         .then_some(())
-        .ok_or_else(|| fail("expected dispatchEvent to return false after preventDefault on a cancelable event"))
+        .ok_or_else(|| {
+            fail(
+                "expected dispatchEvent to return false after preventDefault on a cancelable event",
+            )
+        })
 }
 
 #[test]

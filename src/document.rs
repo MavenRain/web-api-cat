@@ -36,6 +36,10 @@ fn build_document_object(root_value: Value, heap: Heap) -> (Value, Value, Heap) 
         Value::Native(document_query_selector_impl),
     );
     let _ = props.insert(
+        "querySelectorAll".to_owned(),
+        Value::Native(document_query_selector_all_impl),
+    );
+    let _ = props.insert(
         "createElement".to_owned(),
         Value::Native(create_element_impl),
     );
@@ -112,6 +116,10 @@ pub fn build_blank_element(tag: &str, heap: Heap) -> (Value, Heap) {
     let _ = props.insert(
         "querySelector".to_owned(),
         Value::Native(element::query_selector_impl),
+    );
+    let _ = props.insert(
+        "querySelectorAll".to_owned(),
+        Value::Native(element::query_selector_all_impl),
     );
     let _ = props.insert(
         "appendChild".to_owned(),
@@ -392,6 +400,10 @@ fn build_element(html_element: &HtmlElement, heap: Heap) -> (Value, Heap) {
         Value::Native(element::query_selector_impl),
     );
     let _ = props.insert(
+        "querySelectorAll".to_owned(),
+        Value::Native(element::query_selector_all_impl),
+    );
+    let _ = props.insert(
         "appendChild".to_owned(),
         Value::Native(element::append_child_impl),
     );
@@ -656,4 +668,22 @@ fn document_query_selector_impl(
         .and_then(|root_id| element::find_first_descendant(root_id, &selector, &heap))
         .map_or(Outcome::Normal(Value::Null), Outcome::Normal);
     Ok((outcome, heap, fuel))
+}
+
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+fn document_query_selector_all_impl(
+    args: Vec<Value>,
+    this: Value,
+    heap: Heap,
+    fuel: Fuel,
+) -> EvalResult {
+    let selector = match args.first() {
+        Some(Value::String(s)) => s.clone(),
+        Some(_) | None => String::new(),
+    };
+    let matches = document_root_id(&this, &heap)
+        .map(|root_id| element::find_all_descendants(root_id, &selector, &heap))
+        .unwrap_or_default();
+    let (value, heap) = element::build_node_list(matches, heap);
+    Ok((Outcome::Normal(value), heap, fuel))
 }

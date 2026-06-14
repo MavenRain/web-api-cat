@@ -1,8 +1,8 @@
 [package]
 name = "web-api-cat"
-version = "0.7.10"
+version = "0.7.11"
 edition = "2024"
-description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.10 honours the spec's `cancelable` gate on `preventDefault()`: the method now only flips `defaultPrevented` when `this.cancelable === true`.  Default-constructed events (plain `{type: 'foo'}` literals, or `new Event(type)` without explicit options) are NOT cancelable and `preventDefault` is a silent no-op on them; scripts must opt in via `new Event(type, { cancelable: true })` or `{ type, cancelable: true }`.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.11 adds `querySelectorAll(selector)` on both `Element` and `document`.  Walks every descendant in depth-first pre-order and returns ALL matches as a NodeList-shaped Object (numeric-key entries + `length`, same shape as `Element.children` so script-side `list[i]` / `list.length` iteration patterns work uniformly).  Same selector grammar as v0.7.8 (`tag` / `.class` / `#id` / `[attr...]` / `*` / descendant + child combinators / comma-separated lists).  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
 license = "MIT OR Apache-2.0"
 keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
 categories = ["web-programming"]

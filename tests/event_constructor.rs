@@ -252,9 +252,7 @@ fn default_prevented_stays_false_when_not_cancelable() -> Result<(), Error> {
     )?;
     matches!(value, Value::Boolean(false))
         .then_some(())
-        .ok_or_else(|| {
-            fail("expected defaultPrevented to stay false on a non-cancelable event")
-        })
+        .ok_or_else(|| fail("expected defaultPrevented to stay false on a non-cancelable event"))
 }
 
 #[test]

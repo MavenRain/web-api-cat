@@ -178,6 +178,33 @@ pub fn query_selector_impl(args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel
     Ok((outcome, heap, fuel))
 }
 
+/// `Element.querySelectorAll(selector)` -- v0.7.11 companion to
+/// `querySelector`.  Walks every descendant in depth-first
+/// pre-order and returns ALL matches as a NodeList-shaped Object
+/// (numeric-key entries + `length`, same shape as `children`),
+/// rather than stopping at the first match.  Same selector
+/// grammar as v0.7.8 (`tag` / `.class` / `#id` / `[attr...]` /
+/// `*` / descendant + child combinators / comma-separated lists).
+///
+/// # Errors
+///
+/// Never returns `Err`; no matches yields an empty `NodeList`
+/// (`length === 0`).
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn query_selector_all_impl(
+    args: Vec<Value>,
+    this: Value,
+    heap: Heap,
+    fuel: Fuel,
+) -> EvalResult {
+    let selector = string_arg(&args, 0);
+    let matches = object_id_of(&this)
+        .map(|root_id| find_all_descendants(root_id, &selector, &heap))
+        .unwrap_or_default();
+    let (value, heap) = build_node_list(matches, heap);
+    Ok((Outcome::Normal(value), heap, fuel))
+}
+
 #[derive(Debug, Clone, Default)]
 struct SelectorList {
     selectors: Vec<ComplexSelector>,
@@ -494,6 +521,23 @@ fn find_first_descendant_matching(
     })
 }
 
+fn find_all_descendants_matching(
+    root: ObjectId,
+    list: &SelectorList,
+    heap: &Heap,
+) -> Vec<ObjectId> {
+    let children = element_children(root, heap);
+    children
+        .iter()
+        .flat_map(|child_id| {
+            let matched_self = matches_selector_list(*child_id, list, heap)
+                .then_some(*child_id)
+                .into_iter();
+            matched_self.chain(find_all_descendants_matching(*child_id, list, heap))
+        })
+        .collect()
+}
+
 fn matches_selector_list(element_id: ObjectId, list: &SelectorList, heap: &Heap) -> bool {
     list.selectors
         .iter()
@@ -653,6 +697,39 @@ fn string_property(object: &Object, key: &str) -> String {
 pub fn find_first_descendant(root: ObjectId, pattern_source: &str, heap: &Heap) -> Option<Value> {
     let list = parse_selector_list(pattern_source);
     find_first_descendant_matching(root, &list, heap)
+}
+
+/// Public helper used by `document.querySelectorAll` to collect
+/// every descendant of `root` matching `pattern_source`, in
+/// depth-first pre-order.  Returns the raw `ObjectId` list so
+/// the caller can wrap them in whatever shape is appropriate
+/// (`NodeList` via [`build_node_list`], a `Vec<Value>`, etc.).
+#[must_use]
+pub fn find_all_descendants(root: ObjectId, pattern_source: &str, heap: &Heap) -> Vec<ObjectId> {
+    let list = parse_selector_list(pattern_source);
+    find_all_descendants_matching(root, &list, heap)
+}
+
+/// Public helper that wraps `matches` as a `NodeList`-shaped
+/// Object -- numeric-key entries plus `length`, same shape that
+/// `Element.children` uses so script-side iteration patterns
+/// (`for (let i = 0; i < list.length; i++)` and `list[i]`) work
+/// uniformly.
+#[must_use]
+#[allow(clippy::needless_pass_by_value)]
+pub fn build_node_list(matches: Vec<ObjectId>, heap: Heap) -> (Value, Heap) {
+    let length = u32::try_from(matches.len()).unwrap_or(u32::MAX);
+    let pairs: BTreeMap<String, Value> = matches
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (format!("{i}"), Value::Object(*id)))
+        .chain(std::iter::once((
+            "length".to_owned(),
+            Value::Number(f64::from(length)),
+        )))
+        .collect();
+    let (id, heap) = heap.alloc_object(Object::from_properties(pairs));
+    (Value::Object(id), heap)
 }
 
 /// Public helper for `document.getElementById`.
