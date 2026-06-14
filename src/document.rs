@@ -40,6 +40,14 @@ fn build_document_object(root_value: Value, heap: Heap) -> (Value, Value, Heap) 
         Value::Native(document_query_selector_all_impl),
     );
     let _ = props.insert(
+        "getElementsByTagName".to_owned(),
+        Value::Native(document_get_elements_by_tag_name_impl),
+    );
+    let _ = props.insert(
+        "getElementsByClassName".to_owned(),
+        Value::Native(document_get_elements_by_class_name_impl),
+    );
+    let _ = props.insert(
         "createElement".to_owned(),
         Value::Native(create_element_impl),
     );
@@ -123,6 +131,14 @@ pub fn build_blank_element(tag: &str, heap: Heap) -> (Value, Heap) {
     );
     let _ = props.insert("matches".to_owned(), Value::Native(element::matches_impl));
     let _ = props.insert("closest".to_owned(), Value::Native(element::closest_impl));
+    let _ = props.insert(
+        "getElementsByTagName".to_owned(),
+        Value::Native(element::get_elements_by_tag_name_impl),
+    );
+    let _ = props.insert(
+        "getElementsByClassName".to_owned(),
+        Value::Native(element::get_elements_by_class_name_impl),
+    );
     let _ = props.insert(
         "appendChild".to_owned(),
         Value::Native(element::append_child_impl),
@@ -408,6 +424,14 @@ fn build_element(html_element: &HtmlElement, heap: Heap) -> (Value, Heap) {
     let _ = props.insert("matches".to_owned(), Value::Native(element::matches_impl));
     let _ = props.insert("closest".to_owned(), Value::Native(element::closest_impl));
     let _ = props.insert(
+        "getElementsByTagName".to_owned(),
+        Value::Native(element::get_elements_by_tag_name_impl),
+    );
+    let _ = props.insert(
+        "getElementsByClassName".to_owned(),
+        Value::Native(element::get_elements_by_class_name_impl),
+    );
+    let _ = props.insert(
         "appendChild".to_owned(),
         Value::Native(element::append_child_impl),
     );
@@ -688,6 +712,54 @@ fn document_query_selector_all_impl(
     let matches = document_root_id(&this, &heap)
         .map(|root_id| element::find_all_descendants(root_id, &selector, &heap))
         .unwrap_or_default();
+    let (value, heap) = element::build_node_list(matches, heap);
+    Ok((Outcome::Normal(value), heap, fuel))
+}
+
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+fn document_get_elements_by_tag_name_impl(
+    args: Vec<Value>,
+    this: Value,
+    heap: Heap,
+    fuel: Fuel,
+) -> EvalResult {
+    let tag = match args.first() {
+        Some(Value::String(s)) => s.clone(),
+        Some(_) | None => String::new(),
+    };
+    let matches = if tag.is_empty() {
+        Vec::new()
+    } else {
+        document_root_id(&this, &heap)
+            .map(|root_id| element::find_all_descendants(root_id, &tag, &heap))
+            .unwrap_or_default()
+    };
+    let (value, heap) = element::build_node_list(matches, heap);
+    Ok((Outcome::Normal(value), heap, fuel))
+}
+
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+fn document_get_elements_by_class_name_impl(
+    args: Vec<Value>,
+    this: Value,
+    heap: Heap,
+    fuel: Fuel,
+) -> EvalResult {
+    let text = match args.first() {
+        Some(Value::String(s)) => s.clone(),
+        Some(_) | None => String::new(),
+    };
+    let classes: Vec<&str> = text.split_whitespace().collect();
+    let matches = if classes.is_empty() {
+        Vec::new()
+    } else {
+        let selector: String = classes
+            .iter()
+            .fold(String::new(), |acc, c| format!("{acc}.{c}"));
+        document_root_id(&this, &heap)
+            .map(|root_id| element::find_all_descendants(root_id, &selector, &heap))
+            .unwrap_or_default()
+    };
     let (value, heap) = element::build_node_list(matches, heap);
     Ok((Outcome::Normal(value), heap, fuel))
 }

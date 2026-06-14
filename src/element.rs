@@ -178,6 +178,84 @@ pub fn query_selector_impl(args: Vec<Value>, this: Value, heap: Heap, fuel: Fuel
     Ok((outcome, heap, fuel))
 }
 
+/// `Element.getElementsByTagName(name)` (v0.7.14).  Walks every
+/// descendant in depth-first pre-order and returns those whose
+/// tag matches `name` (case-insensitive) as a `NodeList`-shaped
+/// Object.  The literal `'*'` matches all descendants; empty
+/// input returns an empty `NodeList` per spec.  Internally this
+/// just rewrites `name` as a selector string and delegates to
+/// the v0.7.11 / v0.7.12 / v0.7.13 selector machinery -- a tag
+/// name is a valid one-compound selector with no combinators.
+///
+/// # Errors
+///
+/// Never returns `Err`; bad inputs yield an empty `NodeList`
+/// (`length === 0`).
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn get_elements_by_tag_name_impl(
+    args: Vec<Value>,
+    this: Value,
+    heap: Heap,
+    fuel: Fuel,
+) -> EvalResult {
+    let tag = string_arg(&args, 0);
+    let matches = if tag.is_empty() {
+        Vec::new()
+    } else {
+        object_id_of(&this)
+            .map(|root_id| find_all_descendants(root_id, &tag, &heap))
+            .unwrap_or_default()
+    };
+    let (value, heap) = build_node_list(matches, heap);
+    Ok((Outcome::Normal(value), heap, fuel))
+}
+
+/// `Element.getElementsByClassName(classNames)` (v0.7.14).
+/// Walks every descendant in depth-first pre-order and returns
+/// those carrying ALL of the (whitespace-separated) classes in
+/// `classNames` as a `NodeList`-shaped Object.  Empty / whitespace-
+/// only input returns an empty `NodeList` per spec (no implicit
+/// match-everything).  Internally we rewrite each class name as
+/// a `.foo.bar` selector compound and delegate to the v0.7.11+
+/// selector machinery.
+///
+/// # Errors
+///
+/// Never returns `Err`; bad inputs yield an empty `NodeList`.
+#[allow(clippy::needless_pass_by_value, clippy::unnecessary_wraps)]
+pub fn get_elements_by_class_name_impl(
+    args: Vec<Value>,
+    this: Value,
+    heap: Heap,
+    fuel: Fuel,
+) -> EvalResult {
+    let text = string_arg(&args, 0);
+    let matches = class_names_to_selector_string(&text)
+        .and_then(|selector| {
+            object_id_of(&this).map(|root_id| find_all_descendants(root_id, &selector, &heap))
+        })
+        .unwrap_or_default();
+    let (value, heap) = build_node_list(matches, heap);
+    Ok((Outcome::Normal(value), heap, fuel))
+}
+
+/// v0.7.14 helper: convert a space-separated class list into a
+/// concatenated `.foo.bar` selector string.  Returns `None` for
+/// empty / whitespace-only input so callers can short-circuit to
+/// an empty result.
+fn class_names_to_selector_string(text: &str) -> Option<String> {
+    let classes: Vec<&str> = text.split_whitespace().collect();
+    if classes.is_empty() {
+        None
+    } else {
+        Some(
+            classes
+                .iter()
+                .fold(String::new(), |acc, c| format!("{acc}.{c}")),
+        )
+    }
+}
+
 /// `Element.matches(selector)` -- v0.7.13.  Returns `true` when
 /// `this` itself matches `selector`; does not walk the descendant
 /// tree.  Selector grammar identical to `querySelector` /
