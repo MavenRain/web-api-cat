@@ -94,7 +94,13 @@ fn attributes_id_of(element: &Object) -> Option<ObjectId> {
     }
 }
 
-pub(crate) fn read_attribute(this: &Value, name: &str, heap: &Heap) -> Option<String> {
+/// Read an attribute value from an element.  Public so downstream
+/// consumers (e.g. tauri-runtime-servocat populating decoded
+/// `<img>` metadata) can read `src` / etc. directly from the heap
+/// rather than via the JS engine.  Returns `None` for non-element
+/// values, missing `__attributes` slot, or absent attribute.
+#[must_use]
+pub fn read_attribute(this: &Value, name: &str, heap: &Heap) -> Option<String> {
     let element_id = object_id_of(this)?;
     let element = heap.object(element_id)?;
     let attrs_id = attributes_id_of(element)?;
@@ -1182,6 +1188,37 @@ pub fn find_first_in_subtree(root: ObjectId, pattern_source: &str, heap: &Heap) 
     matches_selector_list(root, &list, heap)
         .then_some(Value::Object(root))
         .or_else(|| find_first_descendant_matching(root, &list, heap))
+}
+
+/// v0.7.21 helper for downstream consumers (e.g.
+/// tauri-runtime-servocat populating image metadata after the
+/// fetch + decode pipeline): given an `env` from
+/// [`crate::install`], look up the `document` binding, follow its
+/// `documentElement` property to the html-root `ObjectId`, then
+/// collect every element matching `selector` (using the v0.7.17
+/// "include root" semantics so the html element itself is in the
+/// candidate set).  Returns an empty `Vec` if `document` is
+/// unbound or its document root is missing.
+#[must_use]
+pub fn find_all_in_document(env: &boa_cat::env::Env, selector: &str, heap: &Heap) -> Vec<ObjectId> {
+    document_root_object_id(env, heap)
+        .map(|root| find_all_in_subtree(root, selector, heap))
+        .unwrap_or_default()
+}
+
+/// v0.7.21 helper: extract the document root `ObjectId` (the html
+/// element) from an env produced by [`crate::install`].  Returns
+/// `None` when `document` is unbound or its cell is not an Object.
+#[must_use]
+pub fn document_root_object_id(env: &boa_cat::env::Env, heap: &Heap) -> Option<ObjectId> {
+    let binding = env.lookup("document")?;
+    let value = match binding {
+        boa_cat::env::Binding::Cell(cell_id) => heap.cell(*cell_id)?.value().clone(),
+        boa_cat::env::Binding::Direct(value) => value.clone(),
+    };
+    let document_id = object_id_of(&value)?;
+    let document = heap.object(document_id)?;
+    document.get("documentElement").and_then(object_id_of)
 }
 
 /// v0.7.17 helper used by `document.querySelectorAll` /
