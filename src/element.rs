@@ -94,7 +94,7 @@ fn attributes_id_of(element: &Object) -> Option<ObjectId> {
     }
 }
 
-fn read_attribute(this: &Value, name: &str, heap: &Heap) -> Option<String> {
+pub(crate) fn read_attribute(this: &Value, name: &str, heap: &Heap) -> Option<String> {
     let element_id = object_id_of(this)?;
     let element = heap.object(element_id)?;
     let attrs_id = attributes_id_of(element)?;
@@ -105,7 +105,7 @@ fn read_attribute(this: &Value, name: &str, heap: &Heap) -> Option<String> {
     }
 }
 
-fn write_attribute(this: &Value, name: &str, value: &str, heap: Heap) -> Heap {
+pub(crate) fn write_attribute(this: &Value, name: &str, value: &str, heap: Heap) -> Heap {
     let Some(element_id) = object_id_of(this) else {
         return heap;
     };
@@ -134,6 +134,32 @@ fn write_attribute(this: &Value, name: &str, value: &str, heap: Heap) -> Heap {
     } else {
         heap
     }
+}
+
+/// v0.7.18 helper: remove an attribute by name.  No-op when the
+/// element / `__attributes` slot / attribute is missing.
+pub(crate) fn remove_attribute(this: &Value, name: &str, heap: Heap) -> Heap {
+    let Some(element_id) = object_id_of(this) else {
+        return heap;
+    };
+    let Some(element) = heap.object(element_id).cloned() else {
+        return heap;
+    };
+    let Some(attrs_id) = attributes_id_of(&element) else {
+        return heap;
+    };
+    let Some(attrs) = heap.object(attrs_id) else {
+        return heap;
+    };
+    let filtered: std::collections::BTreeMap<String, Value> = attrs
+        .properties()
+        .iter()
+        .filter(|(k, _)| k.as_str() != name)
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    let updated_attrs = boa_cat::value::Object::from_properties(filtered);
+    heap.store_object(attrs_id, updated_attrs)
+        .unwrap_or_else(|h| h)
 }
 
 fn string_arg(args: &[Value], idx: usize) -> String {
@@ -381,6 +407,10 @@ enum PseudoClass {
     /// `:root` (v0.7.17) -- the element is the document root
     /// (i.e., the `<html>` element with no `__parent__`).
     Root,
+    /// `:checked` (v0.7.18) -- the element has a `checked`
+    /// attribute set, matching the v0.7.18 `input.checked`
+    /// property reflection (see `crate::input`).
+    Checked,
     /// `:not(arg)` (v0.7.15) -- matches an element NOT matching
     /// `arg`.  `arg` is a full `SelectorList` so
     /// `:not(.foo, .bar)` works.  Boxed because `SelectorList`
@@ -616,6 +646,7 @@ fn parse_pseudo_class(bytes: &[u8], start: usize) -> (Option<PseudoClass>, usize
             "only-of-type" => Some(PseudoClass::OnlyOfType),
             "empty" => Some(PseudoClass::Empty),
             "root" => Some(PseudoClass::Root),
+            "checked" => Some(PseudoClass::Checked),
             _other => None,
         };
         (parsed, ident_end)
@@ -989,12 +1020,24 @@ fn matches_pseudo_class(node_id: ObjectId, pseudo: &PseudoClass, heap: &Heap) ->
         }
         PseudoClass::Empty => is_empty_element(node_id, heap),
         PseudoClass::Root => !has_parent(node_id, heap),
+        PseudoClass::Checked => has_attribute_set(node_id, "checked", heap),
         PseudoClass::Not(list) => !matches_selector_list(node_id, list, heap),
     }
 }
 
 fn has_parent(node_id: ObjectId, heap: &Heap) -> bool {
     parent_element_id(node_id, heap).is_some()
+}
+
+/// v0.7.18 helper: `true` iff the element's `__attributes`
+/// slot contains a key called `name` (any value).  Backs the
+/// v0.7.18 `:checked` pseudo-class (and future attribute-presence
+/// pseudo-classes like `:disabled`).
+fn has_attribute_set(node_id: ObjectId, name: &str, heap: &Heap) -> bool {
+    heap.object(node_id)
+        .and_then(attributes_id_of)
+        .and_then(|attrs_id| heap.object(attrs_id))
+        .is_some_and(|attrs| attrs.get(name).is_some())
 }
 
 /// v0.7.17 helper: `true` iff `node_id` has neither element

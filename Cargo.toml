@@ -1,8 +1,8 @@
 [package]
 name = "web-api-cat"
-version = "0.7.17"
+version = "0.7.18"
 edition = "2024"
-description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.17 adds the `:empty` and `:root` structural pseudo-classes plus a semantic fix: `document.querySelector` / `querySelectorAll` / `getElementsByTagName` / `getElementsByClassName` now search the document root AND its descendants (matching browser spec), so `document.querySelector('html')` and `document.querySelector(':root')` both resolve correctly.  Element APIs still walk descendants only.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.18 wires form-control inputs to scripts: `<input>.value` and `<input>.checked` accessor-pair properties reflect the corresponding HTML attributes (reads from `__attributes`, writes through), and the `:checked` pseudo-class matches via the attribute presence so `document.querySelector(':checked')` and `el.matches(':checked')` agree with the post-setter state.  Sets up the form-control story for a Tauri opt-in backend pitch.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
 license = "MIT OR Apache-2.0"
 keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
 categories = ["web-programming"]

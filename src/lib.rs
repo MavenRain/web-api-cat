@@ -31,6 +31,7 @@ pub mod extract;
 pub mod fetch;
 pub mod inline_style;
 pub mod inner_html;
+pub mod input;
 pub mod install;
 pub mod storage;
 
