@@ -1,8 +1,8 @@
 [package]
 name = "web-api-cat"
-version = "0.7.19"
+version = "0.7.20"
 edition = "2024"
-description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.19 finishes the form-state pseudo-class trio started in v0.7.18: `:disabled` matches form-control elements with a `disabled` attribute, `:enabled` matches form-control elements without one.  Tag-gated to the HTML form-control set (`input`, `button`, `select`, `textarea`, `option`, `optgroup`, `fieldset`) so `<div disabled>` correctly matches neither.  Combines freely with attribute selectors and `:not()`.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.20 wires the `<img>` element to scripts: `src` / `alt` / `width` / `height` accessor-pair properties reflect the corresponding HTML attributes, and `naturalWidth` / `naturalHeight` / `complete` read hidden state slots populated by downstream consumers after the fetch + decode pipeline runs.  Public helpers `image::set_natural_size(&img, w, h, heap)` and `image::set_complete(&img, b, heap)` let the runtime (tauri-runtime-servocat) push the decoded state back through to JS.  Opens the image-rendering story for the pending Tauri opt-in backend pitch.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
 license = "MIT OR Apache-2.0"
 keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
 categories = ["web-programming"]

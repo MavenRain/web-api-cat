@@ -177,6 +177,7 @@ pub fn build_blank_element(tag: &str, heap: Heap) -> (Value, Heap) {
     let heap = crate::inner_html::install_outer_html_accessor(&Value::Object(id), heap);
     let heap = crate::input::install_value_accessor(&Value::Object(id), heap);
     let heap = crate::input::install_checked_accessor(&Value::Object(id), heap);
+    let heap = crate::image::install_image_accessors(&Value::Object(id), heap);
     (Value::Object(id), heap)
 }
 
@@ -474,6 +475,7 @@ fn build_element(html_element: &HtmlElement, heap: Heap) -> (Value, Heap) {
     let heap = crate::inner_html::install_outer_html_accessor(&Value::Object(id), heap);
     let heap = crate::input::install_value_accessor(&Value::Object(id), heap);
     let heap = crate::input::install_checked_accessor(&Value::Object(id), heap);
+    let heap = crate::image::install_image_accessors(&Value::Object(id), heap);
     (Value::Object(id), heap)
 }
 
@@ -556,6 +558,7 @@ fn clone_element(element_id: ObjectId, deep: bool, heap: Heap) -> (Value, Heap) 
     let heap = crate::inner_html::install_outer_html_accessor(&Value::Object(new_element_id), heap);
     let heap = crate::input::install_value_accessor(&Value::Object(new_element_id), heap);
     let heap = crate::input::install_checked_accessor(&Value::Object(new_element_id), heap);
+    let heap = crate::image::install_image_accessors(&Value::Object(new_element_id), heap);
     (Value::Object(new_element_id), heap)
 }
 

@@ -29,6 +29,7 @@ pub mod error;
 pub mod event;
 pub mod extract;
 pub mod fetch;
+pub mod image;
 pub mod inline_style;
 pub mod inner_html;
 pub mod input;
