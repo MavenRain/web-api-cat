@@ -411,6 +411,15 @@ enum PseudoClass {
     /// attribute set, matching the v0.7.18 `input.checked`
     /// property reflection (see `crate::input`).
     Checked,
+    /// `:disabled` (v0.7.19) -- a form-control element that has
+    /// the `disabled` attribute set.  Tag-gated to the set of
+    /// elements where `disabled` is a meaningful attribute per
+    /// the HTML spec (`input`, `button`, `select`, `textarea`,
+    /// `option`, `optgroup`, `fieldset`).
+    Disabled,
+    /// `:enabled` (v0.7.19) -- a form-control element (same tag
+    /// gate as `:disabled`) WITHOUT the `disabled` attribute.
+    Enabled,
     /// `:not(arg)` (v0.7.15) -- matches an element NOT matching
     /// `arg`.  `arg` is a full `SelectorList` so
     /// `:not(.foo, .bar)` works.  Boxed because `SelectorList`
@@ -647,6 +656,8 @@ fn parse_pseudo_class(bytes: &[u8], start: usize) -> (Option<PseudoClass>, usize
             "empty" => Some(PseudoClass::Empty),
             "root" => Some(PseudoClass::Root),
             "checked" => Some(PseudoClass::Checked),
+            "disabled" => Some(PseudoClass::Disabled),
+            "enabled" => Some(PseudoClass::Enabled),
             _other => None,
         };
         (parsed, ident_end)
@@ -1021,6 +1032,12 @@ fn matches_pseudo_class(node_id: ObjectId, pseudo: &PseudoClass, heap: &Heap) ->
         PseudoClass::Empty => is_empty_element(node_id, heap),
         PseudoClass::Root => !has_parent(node_id, heap),
         PseudoClass::Checked => has_attribute_set(node_id, "checked", heap),
+        PseudoClass::Disabled => {
+            is_form_control(node_id, heap) && has_attribute_set(node_id, "disabled", heap)
+        }
+        PseudoClass::Enabled => {
+            is_form_control(node_id, heap) && !has_attribute_set(node_id, "disabled", heap)
+        }
         PseudoClass::Not(list) => !matches_selector_list(node_id, list, heap),
     }
 }
@@ -1029,10 +1046,25 @@ fn has_parent(node_id: ObjectId, heap: &Heap) -> bool {
     parent_element_id(node_id, heap).is_some()
 }
 
+/// v0.7.19 helper: `true` iff `node_id` is a form-control
+/// element where the `disabled` attribute is meaningful per the
+/// HTML spec.  Backs the `:disabled` / `:enabled` pseudo-classes
+/// so a `<div disabled>` does not match either (the spec
+/// restricts these pseudos to actual form controls).
+fn is_form_control(node_id: ObjectId, heap: &Heap) -> bool {
+    heap.object(node_id).is_some_and(|object| {
+        let tag = string_property(object, "tagName").to_ascii_lowercase();
+        matches!(
+            tag.as_str(),
+            "input" | "button" | "select" | "textarea" | "option" | "optgroup" | "fieldset"
+        )
+    })
+}
+
 /// v0.7.18 helper: `true` iff the element's `__attributes`
 /// slot contains a key called `name` (any value).  Backs the
-/// v0.7.18 `:checked` pseudo-class (and future attribute-presence
-/// pseudo-classes like `:disabled`).
+/// v0.7.18 `:checked` pseudo-class and the v0.7.19 `:disabled` /
+/// `:enabled` pseudo-classes (after the tag gate).
 fn has_attribute_set(node_id: ObjectId, name: &str, heap: &Heap) -> bool {
     heap.object(node_id)
         .and_then(attributes_id_of)

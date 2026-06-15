@@ -185,6 +185,128 @@ fn checked_pseudo_class_combines_with_not() -> Result<(), Error> {
 }
 
 #[test]
+fn disabled_pseudo_class_matches_disabled_input() -> Result<(), Error> {
+    let value = run(
+        "<html><body>
+            <input type='text'/>
+            <input id='want' type='text' disabled/>
+            <input type='text'/>
+        </body></html>",
+        "document.querySelector(':disabled').id",
+    )?;
+    matches!(value, Value::String(ref s) if s == "want")
+        .then_some(())
+        .ok_or_else(|| fail("expected ':disabled' to pick the disabled input"))
+}
+
+#[test]
+fn enabled_pseudo_class_skips_non_form_elements() -> Result<(), Error> {
+    // Despite the div having a 'disabled' attribute, it is NOT a
+    // form control, so neither :disabled nor :enabled matches.
+    // Only the input is enabled.
+    let value = run(
+        "<html><body>
+            <div id='div' disabled>x</div>
+            <input id='want' type='text'/>
+        </body></html>",
+        "document.querySelector(':enabled').id",
+    )?;
+    matches!(value, Value::String(ref s) if s == "want")
+        .then_some(())
+        .ok_or_else(|| fail("expected ':enabled' to skip <div disabled> and pick the input"))
+}
+
+#[test]
+fn disabled_pseudo_class_skips_non_form_elements() -> Result<(), Error> {
+    // <div disabled> should NOT match :disabled.  Only the form
+    // control input does.
+    let value = run(
+        "<html><body>
+            <div disabled>x</div>
+            <input id='want' type='text' disabled/>
+        </body></html>",
+        "document.querySelector(':disabled').id",
+    )?;
+    matches!(value, Value::String(ref s) if s == "want")
+        .then_some(())
+        .ok_or_else(|| fail("expected ':disabled' to skip <div disabled> and pick the input"))
+}
+
+#[test]
+fn enabled_disabled_partition_form_controls() -> Result<(), Error> {
+    let value = run(
+        "<html><body>
+            <input type='text' disabled/>
+            <input type='text'/>
+            <button disabled>x</button>
+            <button>y</button>
+            <select disabled></select>
+            <select></select>
+        </body></html>",
+        "const en = document.querySelectorAll(':enabled').length;
+        const di = document.querySelectorAll(':disabled').length;
+        (en === 3 && di === 3) ? 'ok' : (en + ',' + di)",
+    )?;
+    matches!(value, Value::String(ref s) if s == "ok")
+        .then_some(())
+        .ok_or_else(|| fail("expected :enabled and :disabled to partition the 6 form controls 3/3"))
+}
+
+#[test]
+fn enabled_pseudo_class_covers_all_form_tags() -> Result<(), Error> {
+    // input / button / select / textarea / option / optgroup / fieldset
+    // are all form controls per HTML spec.  Each without 'disabled'
+    // should match :enabled.
+    let value = run(
+        "<html><body>
+            <input type='text'/>
+            <button>b</button>
+            <select><optgroup><option>x</option></optgroup></select>
+            <textarea></textarea>
+            <fieldset></fieldset>
+        </body></html>",
+        "document.querySelectorAll(':enabled').length",
+    )?;
+    // 7 form controls total: input, button, select, optgroup, option, textarea, fieldset.
+    matches!(value, Value::Number(n) if (n - 7.0).abs() < 1e-9)
+        .then_some(())
+        .ok_or_else(|| fail("expected all 7 form-control tags to match :enabled"))
+}
+
+#[test]
+fn disabled_updates_after_set_attribute() -> Result<(), Error> {
+    let value = run(
+        "<html><body>
+            <input id='host' type='text'/>
+        </body></html>",
+        "const el = document.getElementById('host');
+        const before = el.matches(':enabled');
+        el.setAttribute('disabled', '');
+        const after = el.matches(':disabled');
+        (before === true && after === true) ? 'ok' : 'wrong'",
+    )?;
+    matches!(value, Value::String(ref s) if s == "ok")
+        .then_some(())
+        .ok_or_else(|| fail("expected setAttribute('disabled') to flip :enabled to :disabled"))
+}
+
+#[test]
+fn disabled_combines_with_attribute_selector() -> Result<(), Error> {
+    let value = run(
+        "<html><body>
+            <input type='text' disabled/>
+            <input id='want' type='checkbox' disabled/>
+        </body></html>",
+        "document.querySelector('input[type=checkbox]:disabled').id",
+    )?;
+    matches!(value, Value::String(ref s) if s == "want")
+        .then_some(())
+        .ok_or_else(|| {
+            fail("expected 'input[type=checkbox]:disabled' to pick the disabled checkbox")
+        })
+}
+
+#[test]
 fn matches_with_checked_pseudo_class() -> Result<(), Error> {
     let value = run(
         "<html><body>

@@ -1,8 +1,8 @@
 [package]
 name = "web-api-cat"
-version = "0.7.18"
+version = "0.7.19"
 edition = "2024"
-description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.18 wires form-control inputs to scripts: `<input>.value` and `<input>.checked` accessor-pair properties reflect the corresponding HTML attributes (reads from `__attributes`, writes through), and the `:checked` pseudo-class matches via the attribute presence so `document.querySelector(':checked')` and `el.matches(':checked')` agree with the post-setter state.  Sets up the form-control story for a Tauri opt-in backend pitch.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.19 finishes the form-state pseudo-class trio started in v0.7.18: `:disabled` matches form-control elements with a `disabled` attribute, `:enabled` matches form-control elements without one.  Tag-gated to the HTML form-control set (`input`, `button`, `select`, `textarea`, `option`, `optgroup`, `fieldset`) so `<div disabled>` correctly matches neither.  Combines freely with attribute selectors and `:not()`.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
 license = "MIT OR Apache-2.0"
 keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
 categories = ["web-programming"]
