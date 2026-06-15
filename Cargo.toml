@@ -1,8 +1,8 @@
 [package]
 name = "web-api-cat"
-version = "0.7.15"
+version = "0.7.16"
 edition = "2024"
-description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.15 adds `:not(selector)` negation pseudo-class to the v0.7.13 pseudo-class roster.  The argument is a full SelectorList so `:not(.foo, .bar)` and `:not(:not(.foo))` (nested negations, Selectors Level 4) both work via balanced-paren scanning.  Reaches scripts through `querySelector`, `querySelectorAll`, `matches`, and `closest` -- all reusing the v0.7.8-14 selector machinery.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.16 adds the type-aware structural pseudo-classes `:first-of-type`, `:last-of-type`, and `:only-of-type` -- parallels of v0.7.13's `:first-child` / `:last-child` / `:only-child` but filtered by tag.  So `h2:first-of-type` picks the first h2 even when an earlier sibling has a different tag.  Reachable through `querySelector`, `querySelectorAll`, `matches`, `closest`, and combines freely with the v0.7.15 `:not()` negation.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
 license = "MIT OR Apache-2.0"
 keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
 categories = ["web-programming"]

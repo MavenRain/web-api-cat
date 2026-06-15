@@ -314,6 +314,109 @@ fn not_pseudo_class_combines_with_other_constraints() -> Result<(), Error> {
 }
 
 #[test]
+fn first_of_type_pseudo_class() -> Result<(), Error> {
+    // h2 is first-of-type even though it is NOT first-child:
+    // the p ahead of it is a different tag.
+    let value = run(
+        "<html><body><div><p>p1</p><h2 id='want'>h2a</h2><p>p2</p><h2>h2b</h2></div></body></html>",
+        "document.querySelector('h2:first-of-type').id",
+    )?;
+    matches!(value, Value::String(ref s) if s == "want")
+        .then_some(())
+        .ok_or_else(|| fail("expected first h2 to be h2:first-of-type even with a preceding p"))
+}
+
+#[test]
+fn last_of_type_pseudo_class() -> Result<(), Error> {
+    // The last h2 is :last-of-type even though a later span exists.
+    let value = run(
+        "<html><body><div><h2>h2a</h2><p>p1</p><h2 id='want'>h2b</h2><span>tail</span></div></body></html>",
+        "document.querySelector('h2:last-of-type').id",
+    )?;
+    matches!(value, Value::String(ref s) if s == "want")
+        .then_some(())
+        .ok_or_else(|| fail("expected last h2 to be h2:last-of-type even with a trailing span"))
+}
+
+#[test]
+fn only_of_type_pseudo_class() -> Result<(), Error> {
+    // The lone h2 in the section is :only-of-type; the section
+    // also has two p's, but they don't disqualify the h2.
+    let value = run(
+        "<html><body>
+            <section><p>a</p><h2 id='want'>h2</h2><p>b</p></section>
+            <section><h2>not-this</h2><h2>nor-this</h2></section>
+        </body></html>",
+        "document.querySelector('h2:only-of-type').id",
+    )?;
+    matches!(value, Value::String(ref s) if s == "want")
+        .then_some(())
+        .ok_or_else(|| fail("expected :only-of-type to pick the lone h2 ignoring sibling p tags"))
+}
+
+#[test]
+fn only_of_type_rejects_when_sibling_shares_tag() -> Result<(), Error> {
+    // Two p's are siblings, so neither is :only-of-type.
+    // The h2 IS :only-of-type and should be the match.
+    let value = run(
+        "<html><body><div><p>a</p><h2 id='want'>h</h2><p>b</p></div></body></html>",
+        "document.querySelector(':only-of-type').tagName",
+    )?;
+    matches!(value, Value::String(ref s) if s.eq_ignore_ascii_case("h2") || s.eq_ignore_ascii_case("body") || s.eq_ignore_ascii_case("html") || s.eq_ignore_ascii_case("div"))
+        .then_some(())
+        .ok_or_else(|| fail("expected :only-of-type to skip the duplicate p's"))
+}
+
+#[test]
+fn first_of_type_via_query_selector_all() -> Result<(), Error> {
+    // Each section has its own first p.  Three sections -> three.
+    let value = run(
+        "<html><body>
+            <section><h2>h</h2><p>p1a</p><p>p1b</p></section>
+            <section><p>p2a</p><p>p2b</p></section>
+            <section><h2>h</h2><p>p3a</p></section>
+        </body></html>",
+        "document.querySelectorAll('p:first-of-type').length",
+    )?;
+    matches!(value, Value::Number(n) if (n - 3.0).abs() < 1e-9)
+        .then_some(())
+        .ok_or_else(|| fail("expected three first-of-type p elements across three sections"))
+}
+
+#[test]
+fn of_type_combines_with_not() -> Result<(), Error> {
+    // First h2 inside section, but not the one with class skip.
+    let value = run(
+        "<html><body>
+            <section><h2 class='skip'>x</h2><h2 id='want'>y</h2></section>
+        </body></html>",
+        "document.querySelector('section h2:not(.skip)').id",
+    )?;
+    matches!(value, Value::String(ref s) if s == "want")
+        .then_some(())
+        .ok_or_else(|| fail("expected ':not(.skip)' to filter out the first h2"))
+}
+
+#[test]
+fn matches_with_first_of_type_via_element_api() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div><p id='p1'>a</p><h2 id='h1'>b</h2><p id='p2'>c</p><h2 id='h2'>d</h2></div></body></html>",
+        "const p1 = document.getElementById('p1');
+        const p2 = document.getElementById('p2');
+        const h1 = document.getElementById('h1');
+        const h2 = document.getElementById('h2');
+        const ok = p1.matches(':first-of-type') === true &&
+                   p2.matches(':first-of-type') === false &&
+                   h1.matches(':first-of-type') === true &&
+                   h2.matches(':last-of-type') === true;
+        ok ? 'ok' : 'wrong'",
+    )?;
+    matches!(value, Value::String(ref s) if s == "ok")
+        .then_some(())
+        .ok_or_else(|| fail("expected of-type pseudo-classes to discriminate by tag"))
+}
+
+#[test]
 fn matches_with_pseudo_class() -> Result<(), Error> {
     let value = run(
         "<html><body><div><p id='first'>a</p><p id='middle'>b</p><p id='last'>c</p></div></body></html>",

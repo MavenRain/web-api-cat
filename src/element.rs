@@ -365,6 +365,15 @@ enum PseudoClass {
     /// `:only-child` -- the element is the sole child of its
     /// parent (both first AND last).
     OnlyChild,
+    /// `:first-of-type` (v0.7.16) -- this element has no
+    /// preceding sibling with the same element-type (tag name).
+    FirstOfType,
+    /// `:last-of-type` (v0.7.16) -- this element has no
+    /// following sibling with the same element-type.
+    LastOfType,
+    /// `:only-of-type` (v0.7.16) -- this element is the sole
+    /// child of its parent with its tag name.
+    OnlyOfType,
     /// `:not(arg)` (v0.7.15) -- matches an element NOT matching
     /// `arg`.  `arg` is a full `SelectorList` so
     /// `:not(.foo, .bar)` works.  Boxed because `SelectorList`
@@ -595,6 +604,9 @@ fn parse_pseudo_class(bytes: &[u8], start: usize) -> (Option<PseudoClass>, usize
             "first-child" => Some(PseudoClass::FirstChild),
             "last-child" => Some(PseudoClass::LastChild),
             "only-child" => Some(PseudoClass::OnlyChild),
+            "first-of-type" => Some(PseudoClass::FirstOfType),
+            "last-of-type" => Some(PseudoClass::LastOfType),
+            "only-of-type" => Some(PseudoClass::OnlyOfType),
             _other => None,
         };
         (parsed, ident_end)
@@ -955,12 +967,56 @@ fn matches_pseudo_class(node_id: ObjectId, pseudo: &PseudoClass, heap: &Heap) ->
                 && previous_sibling_id(node_id, heap).is_none()
                 && next_sibling_id(node_id, heap).is_none()
         }
+        PseudoClass::FirstOfType => {
+            has_parent(node_id, heap) && !has_preceding_sibling_of_same_type(node_id, heap)
+        }
+        PseudoClass::LastOfType => {
+            has_parent(node_id, heap) && !has_following_sibling_of_same_type(node_id, heap)
+        }
+        PseudoClass::OnlyOfType => {
+            has_parent(node_id, heap)
+                && !has_preceding_sibling_of_same_type(node_id, heap)
+                && !has_following_sibling_of_same_type(node_id, heap)
+        }
         PseudoClass::Not(list) => !matches_selector_list(node_id, list, heap),
     }
 }
 
 fn has_parent(node_id: ObjectId, heap: &Heap) -> bool {
     parent_element_id(node_id, heap).is_some()
+}
+
+/// v0.7.16 helper: the lowercase-normalised `tagName` of an
+/// element, or `None` for a detached / non-element node.  Used by
+/// the `:first-of-type` / `:last-of-type` / `:only-of-type`
+/// matchers to walk siblings filtering by tag.
+fn tag_name_of(node_id: ObjectId, heap: &Heap) -> Option<String> {
+    heap.object(node_id)
+        .map(|object| string_property(object, "tagName"))
+}
+
+/// v0.7.16 helper: `true` iff some preceding sibling shares
+/// `node_id`'s tag name (case-insensitive).  Used to gate
+/// `:first-of-type` / `:only-of-type`.
+fn has_preceding_sibling_of_same_type(node_id: ObjectId, heap: &Heap) -> bool {
+    tag_name_of(node_id, heap).is_some_and(|want| {
+        std::iter::successors(previous_sibling_id(node_id, heap), |id| {
+            previous_sibling_id(*id, heap)
+        })
+        .any(|id| tag_name_of(id, heap).is_some_and(|t| t.eq_ignore_ascii_case(&want)))
+    })
+}
+
+/// v0.7.16 helper: `true` iff some following sibling shares
+/// `node_id`'s tag name (case-insensitive).  Used to gate
+/// `:last-of-type` / `:only-of-type`.
+fn has_following_sibling_of_same_type(node_id: ObjectId, heap: &Heap) -> bool {
+    tag_name_of(node_id, heap).is_some_and(|want| {
+        std::iter::successors(next_sibling_id(node_id, heap), |id| {
+            next_sibling_id(*id, heap)
+        })
+        .any(|id| tag_name_of(id, heap).is_some_and(|t| t.eq_ignore_ascii_case(&want)))
+    })
 }
 
 fn element_children(node_id: ObjectId, heap: &Heap) -> Vec<ObjectId> {
