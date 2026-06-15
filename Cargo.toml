@@ -1,8 +1,8 @@
 [package]
 name = "web-api-cat"
-version = "0.7.21"
+version = "0.7.22"
 edition = "2024"
-description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.21 surfaces three element-walking helpers downstream consumers (e.g. tauri-runtime-servocat populating decoded `<img>` metadata) need to enumerate heap-side DOM elements without going through the JS engine: `read_attribute(&Value::Object(id), name, &heap)` is now `pub` (was `pub(crate)`), and two new helpers in `element` -- `document_root_object_id(&env, &heap)` and `find_all_in_document(&env, selector, &heap)` -- locate the document root via `env.lookup(\"document\")` and run the v0.7.17 subtree-walker (include root + descendants).  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.22 wires the Location API: `window.location` (also bound as global `location`) exposes `href` (read-write), `protocol` / `host` / `hostname` / `port` / `pathname` / `search` / `hash` / `origin` (read-only, parsed from href via the `url` crate), and methods `assign(url)` / `replace(url)` / `reload()` / `toString()`.  Setters and methods record a NavigationIntent enum to a hidden slot that downstream consumers read via `location::read_pending_navigation(&env, &heap)` and clear with `clear_pending_navigation`.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
 license = "MIT OR Apache-2.0"
 keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
 categories = ["web-programming"]
@@ -12,6 +12,7 @@ boa-cat = "0.7.2"
 html-cat = "0.1"
 net-cat = { version = "0.3", features = ["tls"] }
 dom-cat = "0.1"
+url = "2"
 
 [dev-dependencies]
 proptest = "1"

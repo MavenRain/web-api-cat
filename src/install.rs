@@ -13,6 +13,7 @@ use html_cat::Document as HtmlDoc;
 use crate::document::build as build_document;
 use crate::event::{custom_event_constructor_impl, event_constructor_impl};
 use crate::fetch::fetch_impl;
+use crate::location::build_location_object;
 use crate::storage::build_storage_object;
 
 /// Fold the web APIs and the parsed document into `env` and `heap`,
@@ -27,10 +28,12 @@ pub fn install(env: Env, heap: Heap, html_doc: &HtmlDoc) -> (Env, Heap) {
     let (document_value, _root_value, heap) = build_document(html_doc, heap);
     let (local_storage_value, heap) = build_storage_object(heap);
     let (session_storage_value, heap) = build_storage_object(heap);
+    let (location_value, heap) = build_location_object(heap);
     let (window_value, heap) = build_window_object(
         &document_value,
         &local_storage_value,
         &session_storage_value,
+        &location_value,
         heap,
     );
     let bindings: Vec<(&str, Value)> = vec![
@@ -39,6 +42,8 @@ pub fn install(env: Env, heap: Heap, html_doc: &HtmlDoc) -> (Env, Heap) {
         ("window", window_value),
         ("localStorage", local_storage_value),
         ("sessionStorage", session_storage_value),
+        // v0.7.22: `location` (also reachable as `window.location`).
+        ("location", location_value),
         // v0.7.9: Event / CustomEvent constructors.  Bound as
         // `Value::Native(...)` and dispatched through boa-cat's
         // NativeFn-as-constructor path (verified in boa-cat
@@ -60,12 +65,14 @@ fn build_window_object(
     document_value: &Value,
     local_storage_value: &Value,
     session_storage_value: &Value,
+    location_value: &Value,
     heap: Heap,
 ) -> (Value, Heap) {
     let mut props = BTreeMap::new();
     let _ = props.insert("document".to_owned(), document_value.clone());
     let _ = props.insert("localStorage".to_owned(), local_storage_value.clone());
     let _ = props.insert("sessionStorage".to_owned(), session_storage_value.clone());
+    let _ = props.insert("location".to_owned(), location_value.clone());
     let (id, heap) = heap.alloc_object(Object::from_properties(props));
     (Value::Object(id), heap)
 }
