@@ -43,14 +43,17 @@ fn multiple_classes_in_one_compound_must_all_match() -> Result<(), Error> {
 
 #[test]
 fn universal_selector_matches_first_descendant() -> Result<(), Error> {
+    // v0.7.17: document.querySelector now searches the document
+    // root + descendants (matching browser spec), so `*` resolves
+    // to the html element rather than the body element.
     let value = run(
         "<html><body><div id='host'>x</div></body></html>",
         "document.querySelector('*').tagName",
     )?;
-    matches!(value, Value::String(ref s) if s.eq_ignore_ascii_case("body"))
+    matches!(value, Value::String(ref s) if s.eq_ignore_ascii_case("html"))
         .then_some(())
         .ok_or_else(|| {
-            fail("expected universal selector to match the first descendant element (body)")
+            fail("expected universal selector to match the document root element (html)")
         })
 }
 

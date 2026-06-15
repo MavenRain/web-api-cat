@@ -374,6 +374,13 @@ enum PseudoClass {
     /// `:only-of-type` (v0.7.16) -- this element is the sole
     /// child of its parent with its tag name.
     OnlyOfType,
+    /// `:empty` (v0.7.17) -- the element has no child elements
+    /// AND no text content.  Per CSS3 spec, whitespace counts as
+    /// text content (so `<p> </p>` is not `:empty`).
+    Empty,
+    /// `:root` (v0.7.17) -- the element is the document root
+    /// (i.e., the `<html>` element with no `__parent__`).
+    Root,
     /// `:not(arg)` (v0.7.15) -- matches an element NOT matching
     /// `arg`.  `arg` is a full `SelectorList` so
     /// `:not(.foo, .bar)` works.  Boxed because `SelectorList`
@@ -607,6 +614,8 @@ fn parse_pseudo_class(bytes: &[u8], start: usize) -> (Option<PseudoClass>, usize
             "first-of-type" => Some(PseudoClass::FirstOfType),
             "last-of-type" => Some(PseudoClass::LastOfType),
             "only-of-type" => Some(PseudoClass::OnlyOfType),
+            "empty" => Some(PseudoClass::Empty),
+            "root" => Some(PseudoClass::Root),
             _other => None,
         };
         (parsed, ident_end)
@@ -978,12 +987,25 @@ fn matches_pseudo_class(node_id: ObjectId, pseudo: &PseudoClass, heap: &Heap) ->
                 && !has_preceding_sibling_of_same_type(node_id, heap)
                 && !has_following_sibling_of_same_type(node_id, heap)
         }
+        PseudoClass::Empty => is_empty_element(node_id, heap),
+        PseudoClass::Root => !has_parent(node_id, heap),
         PseudoClass::Not(list) => !matches_selector_list(node_id, list, heap),
     }
 }
 
 fn has_parent(node_id: ObjectId, heap: &Heap) -> bool {
     parent_element_id(node_id, heap).is_some()
+}
+
+/// v0.7.17 helper: `true` iff `node_id` has neither element
+/// children nor text content (whitespace included).  Backs the
+/// `:empty` pseudo-class.
+fn is_empty_element(node_id: ObjectId, heap: &Heap) -> bool {
+    let no_children = element_children(node_id, heap).is_empty();
+    let no_text = heap
+        .object(node_id)
+        .is_none_or(|object| string_property(object, "textContent").is_empty());
+    no_children && no_text
 }
 
 /// v0.7.16 helper: the lowercase-normalised `tagName` of an
@@ -1053,15 +1075,17 @@ fn string_property(object: &Object, key: &str) -> String {
     }
 }
 
-/// Public helper used by `document.querySelector` to perform the search
-/// from the document root.
+/// Public helper used by `Element.querySelector` to perform the
+/// search across descendants only (NOT including `root`).  Matches
+/// the spec's "descendant" semantics on Element.
 #[must_use]
 pub fn find_first_descendant(root: ObjectId, pattern_source: &str, heap: &Heap) -> Option<Value> {
     let list = parse_selector_list(pattern_source);
     find_first_descendant_matching(root, &list, heap)
 }
 
-/// Public helper used by `document.querySelectorAll` to collect
+/// Public helper used by `Element.querySelectorAll` /
+/// `getElementsByTagName` / `getElementsByClassName` to collect
 /// every descendant of `root` matching `pattern_source`, in
 /// depth-first pre-order.  Returns the raw `ObjectId` list so
 /// the caller can wrap them in whatever shape is appropriate
@@ -1070,6 +1094,33 @@ pub fn find_first_descendant(root: ObjectId, pattern_source: &str, heap: &Heap) 
 pub fn find_all_descendants(root: ObjectId, pattern_source: &str, heap: &Heap) -> Vec<ObjectId> {
     let list = parse_selector_list(pattern_source);
     find_all_descendants_matching(root, &list, heap)
+}
+
+/// v0.7.17 helper used by `document.querySelector`: search `root`
+/// AND its descendants.  Necessary so `document.querySelector(':root')`
+/// (and `document.querySelector('html')`) return the document element
+/// rather than `null`; per spec `document.querySelector` searches the
+/// whole document including the documentElement.
+#[must_use]
+pub fn find_first_in_subtree(root: ObjectId, pattern_source: &str, heap: &Heap) -> Option<Value> {
+    let list = parse_selector_list(pattern_source);
+    matches_selector_list(root, &list, heap)
+        .then_some(Value::Object(root))
+        .or_else(|| find_first_descendant_matching(root, &list, heap))
+}
+
+/// v0.7.17 helper used by `document.querySelectorAll` /
+/// `document.getElementsByTagName` / `document.getElementsByClassName`:
+/// search `root` AND its descendants, returning the document element
+/// first if it matches (preserves depth-first pre-order).
+#[must_use]
+pub fn find_all_in_subtree(root: ObjectId, pattern_source: &str, heap: &Heap) -> Vec<ObjectId> {
+    let list = parse_selector_list(pattern_source);
+    let root_match = matches_selector_list(root, &list, heap).then_some(root);
+    root_match
+        .into_iter()
+        .chain(find_all_descendants_matching(root, &list, heap))
+        .collect()
 }
 
 /// Public helper that wraps `matches` as a `NodeList`-shaped

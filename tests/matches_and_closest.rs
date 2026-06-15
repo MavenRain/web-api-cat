@@ -226,9 +226,9 @@ fn not_pseudo_class_accepts_selector_list() -> Result<(), Error> {
         </body></html>",
         "document.querySelector(':not(p, h2, h3)').tagName",
     )?;
-    matches!(value, Value::String(ref s) if s.eq_ignore_ascii_case("body") || s.eq_ignore_ascii_case("div"))
+    matches!(value, Value::String(ref s) if s.eq_ignore_ascii_case("html") || s.eq_ignore_ascii_case("body") || s.eq_ignore_ascii_case("div"))
         .then_some(())
-        .ok_or_else(|| fail("expected ':not(p, h2, h3)' to skip those tags and pick body or div"))
+        .ok_or_else(|| fail("expected ':not(p, h2, h3)' to skip those tags and pick html, body, or div"))
 }
 
 #[test]
@@ -414,6 +414,99 @@ fn matches_with_first_of_type_via_element_api() -> Result<(), Error> {
     matches!(value, Value::String(ref s) if s == "ok")
         .then_some(())
         .ok_or_else(|| fail("expected of-type pseudo-classes to discriminate by tag"))
+}
+
+#[test]
+fn empty_pseudo_class_matches_no_children_no_text() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div id='want'></div><div>has text</div></body></html>",
+        "document.querySelector('div:empty').id",
+    )?;
+    matches!(value, Value::String(ref s) if s == "want")
+        .then_some(())
+        .ok_or_else(|| fail("expected ':empty' to pick the div with no children and no text"))
+}
+
+#[test]
+fn empty_pseudo_class_rejects_element_children() -> Result<(), Error> {
+    // The outer div has an element child, so it is NOT :empty.
+    // Inner span IS :empty.  querySelector(':empty') walks
+    // depth-first and should hit the span.
+    let value = run(
+        "<html><body><div id='outer'><span id='inner'></span></div></body></html>",
+        "document.querySelector('span:empty').id",
+    )?;
+    matches!(value, Value::String(ref s) if s == "inner")
+        .then_some(())
+        .ok_or_else(|| fail("expected ':empty' to pick the empty inner span"))
+}
+
+#[test]
+fn empty_pseudo_class_rejects_text_content() -> Result<(), Error> {
+    let value = run(
+        "<html><body><p id='not-empty'>text</p><p id='want'></p></body></html>",
+        "document.querySelector('p:empty').id",
+    )?;
+    matches!(value, Value::String(ref s) if s == "want")
+        .then_some(())
+        .ok_or_else(|| fail("expected ':empty' to reject p with text content"))
+}
+
+#[test]
+fn empty_pseudo_class_combines_with_not() -> Result<(), Error> {
+    let value = run(
+        "<html><body>
+            <p>text</p>
+            <p id='want' class='live'></p>
+            <p></p>
+        </body></html>",
+        "document.querySelector('p:empty:not(:not(.live))').id",
+    )?;
+    matches!(value, Value::String(ref s) if s == "want")
+        .then_some(())
+        .ok_or_else(|| fail("expected ':empty:not(:not(.live))' to pick the empty live p"))
+}
+
+#[test]
+fn root_pseudo_class_matches_html_element() -> Result<(), Error> {
+    let value = run(
+        "<html><body><div>x</div></body></html>",
+        "document.querySelector(':root').tagName",
+    )?;
+    matches!(value, Value::String(ref s) if s.eq_ignore_ascii_case("html"))
+        .then_some(())
+        .ok_or_else(|| fail("expected ':root' to pick the html element"))
+}
+
+#[test]
+fn root_pseudo_class_via_matches() -> Result<(), Error> {
+    let value = run(
+        "<html><body id='b'><div id='d'>x</div></body></html>",
+        "const root = document.querySelector(':root');
+        const body = document.getElementById('b');
+        const div = document.getElementById('d');
+        const ok = root.matches(':root') === true &&
+                   body.matches(':root') === false &&
+                   div.matches(':root') === false;
+        ok ? 'ok' : 'wrong'",
+    )?;
+    matches!(value, Value::String(ref s) if s == "ok")
+        .then_some(())
+        .ok_or_else(|| fail("expected ':root' to discriminate the html element only"))
+}
+
+#[test]
+fn root_pseudo_class_combines_with_tag() -> Result<(), Error> {
+    // html:root matches, body:root does not.
+    let value = run(
+        "<html><body>x</body></html>",
+        "const ok = document.querySelector('html:root') !== null &&
+                   document.querySelector('body:root') === null;
+        ok ? 'ok' : 'wrong'",
+    )?;
+    matches!(value, Value::String(ref s) if s == "ok")
+        .then_some(())
+        .ok_or_else(|| fail("expected 'html:root' to match but 'body:root' to miss"))
 }
 
 #[test]

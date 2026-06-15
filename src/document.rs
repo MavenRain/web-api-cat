@@ -693,7 +693,7 @@ fn document_query_selector_impl(
         Some(_) | None => String::new(),
     };
     let outcome = document_root_id(&this, &heap)
-        .and_then(|root_id| element::find_first_descendant(root_id, &selector, &heap))
+        .and_then(|root_id| element::find_first_in_subtree(root_id, &selector, &heap))
         .map_or(Outcome::Normal(Value::Null), Outcome::Normal);
     Ok((outcome, heap, fuel))
 }
@@ -710,7 +710,7 @@ fn document_query_selector_all_impl(
         Some(_) | None => String::new(),
     };
     let matches = document_root_id(&this, &heap)
-        .map(|root_id| element::find_all_descendants(root_id, &selector, &heap))
+        .map(|root_id| element::find_all_in_subtree(root_id, &selector, &heap))
         .unwrap_or_default();
     let (value, heap) = element::build_node_list(matches, heap);
     Ok((Outcome::Normal(value), heap, fuel))
@@ -731,7 +731,7 @@ fn document_get_elements_by_tag_name_impl(
         Vec::new()
     } else {
         document_root_id(&this, &heap)
-            .map(|root_id| element::find_all_descendants(root_id, &tag, &heap))
+            .map(|root_id| element::find_all_in_subtree(root_id, &tag, &heap))
             .unwrap_or_default()
     };
     let (value, heap) = element::build_node_list(matches, heap);
@@ -757,7 +757,7 @@ fn document_get_elements_by_class_name_impl(
             .iter()
             .fold(String::new(), |acc, c| format!("{acc}.{c}"));
         document_root_id(&this, &heap)
-            .map(|root_id| element::find_all_descendants(root_id, &selector, &heap))
+            .map(|root_id| element::find_all_in_subtree(root_id, &selector, &heap))
             .unwrap_or_default()
     };
     let (value, heap) = element::build_node_list(matches, heap);
