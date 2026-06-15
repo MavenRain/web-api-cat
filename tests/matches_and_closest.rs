@@ -201,6 +201,119 @@ fn pseudo_class_with_query_selector_all() -> Result<(), Error> {
 }
 
 #[test]
+fn not_pseudo_class_excludes_class_match() -> Result<(), Error> {
+    let value = run(
+        "<html><body>
+            <p class='skip'>x</p>
+            <p id='want'>y</p>
+            <p class='skip'>z</p>
+        </body></html>",
+        "document.querySelector('p:not(.skip)').id",
+    )?;
+    matches!(value, Value::String(ref s) if s == "want")
+        .then_some(())
+        .ok_or_else(|| fail("expected 'p:not(.skip)' to pick the p without the skip class"))
+}
+
+#[test]
+fn not_pseudo_class_accepts_selector_list() -> Result<(), Error> {
+    let value = run(
+        "<html><body>
+            <p>a</p>
+            <h2>b</h2>
+            <h3>c</h3>
+            <div id='want'>d</div>
+        </body></html>",
+        "document.querySelector(':not(p, h2, h3)').tagName",
+    )?;
+    matches!(value, Value::String(ref s) if s.eq_ignore_ascii_case("body") || s.eq_ignore_ascii_case("div"))
+        .then_some(())
+        .ok_or_else(|| fail("expected ':not(p, h2, h3)' to skip those tags and pick body or div"))
+}
+
+#[test]
+fn not_pseudo_class_with_query_selector_all() -> Result<(), Error> {
+    let value = run(
+        "<html><body>
+            <p>a</p>
+            <p class='skip'>b</p>
+            <p>c</p>
+            <p class='skip'>d</p>
+        </body></html>",
+        "document.querySelectorAll('p:not(.skip)').length",
+    )?;
+    matches!(value, Value::Number(n) if (n - 2.0).abs() < 1e-9)
+        .then_some(())
+        .ok_or_else(|| fail("expected two p's without the skip class"))
+}
+
+#[test]
+fn not_pseudo_class_with_tag_argument() -> Result<(), Error> {
+    let value = run(
+        "<html><body>
+            <section>
+                <p>a</p>
+                <h2 id='want'>b</h2>
+            </section>
+        </body></html>",
+        "document.querySelector('section :not(p)').id",
+    )?;
+    matches!(value, Value::String(ref s) if s == "want")
+        .then_some(())
+        .ok_or_else(|| fail("expected 'section :not(p)' to pick the h2 inside section"))
+}
+
+#[test]
+fn not_pseudo_class_via_matches() -> Result<(), Error> {
+    let value = run(
+        "<html><body>
+            <p id='plain'>x</p>
+            <p id='special' class='special'>y</p>
+        </body></html>",
+        "const plain = document.getElementById('plain');
+        const special = document.getElementById('special');
+        const ok = plain.matches(':not(.special)') === true &&
+                   special.matches(':not(.special)') === false;
+        ok ? 'ok' : 'wrong'",
+    )?;
+    matches!(value, Value::String(ref s) if s == "ok")
+        .then_some(())
+        .ok_or_else(|| fail("expected matches(':not(.special)') to invert class match"))
+}
+
+#[test]
+fn not_pseudo_class_nested() -> Result<(), Error> {
+    // :not(:not(.foo)) reduces to .foo via double negation.
+    // The parser supports nested parens via find_balanced_close_paren.
+    let value = run(
+        "<html><body>
+            <p>a</p>
+            <p class='foo' id='want'>b</p>
+            <p>c</p>
+        </body></html>",
+        "document.querySelector('p:not(:not(.foo))').id",
+    )?;
+    matches!(value, Value::String(ref s) if s == "want")
+        .then_some(())
+        .ok_or_else(|| fail("expected ':not(:not(.foo))' to fold to '.foo'"))
+}
+
+#[test]
+fn not_pseudo_class_combines_with_other_constraints() -> Result<(), Error> {
+    let value = run(
+        "<html><body>
+            <a class='ext' href='/x'>x</a>
+            <a class='int' id='want' href='/y'>y</a>
+            <a class='ext' href='/z'>z</a>
+        </body></html>",
+        "document.querySelector('a[href]:not(.ext)').id",
+    )?;
+    matches!(value, Value::String(ref s) if s == "want")
+        .then_some(())
+        .ok_or_else(|| fail("expected 'a[href]:not(.ext)' to pick the non-ext link"))
+}
+
+#[test]
 fn matches_with_pseudo_class() -> Result<(), Error> {
     let value = run(
         "<html><body><div><p id='first'>a</p><p id='middle'>b</p><p id='last'>c</p></div></body></html>",

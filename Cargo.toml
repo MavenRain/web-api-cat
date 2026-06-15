@@ -1,8 +1,8 @@
 [package]
 name = "web-api-cat"
-version = "0.7.14"
+version = "0.7.15"
 edition = "2024"
-description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.14 adds `getElementsByTagName(name)` (with `'*'` universal and empty-input-yields-empty per spec) and `getElementsByClassName(classNames)` (whitespace-separated; ALL classes must match) on both `Element` and `document`.  Both reuse the v0.7.11 selector machinery -- they're typed wrappers around `find_all_descendants` with the input rewritten as a selector string.  Empty / whitespace-only inputs short-circuit to an empty NodeList without invoking the matcher (spec requires this; the underlying matcher would otherwise match everything).  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
+description = "Bindings between boa-cat (JS engine) and the DOM (html-cat tree) plus fetch (net-cat).  v0.7.15 adds `:not(selector)` negation pseudo-class to the v0.7.13 pseudo-class roster.  The argument is a full SelectorList so `:not(.foo, .bar)` and `:not(:not(.foo))` (nested negations, Selectors Level 4) both work via balanced-paren scanning.  Reaches scripts through `querySelector`, `querySelectorAll`, `matches`, and `closest` -- all reusing the v0.7.8-14 selector machinery.  Seventh sub-crate of a Servo-replacement webview runtime targeting Tauri."
 license = "MIT OR Apache-2.0"
 keywords = ["dom", "fetch", "javascript", "boa", "type-driven"]
 categories = ["web-programming"]

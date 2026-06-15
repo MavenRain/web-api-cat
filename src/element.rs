@@ -356,8 +356,7 @@ struct CompoundSelector {
     pseudo_classes: Vec<PseudoClass>,
 }
 
-#[derive(Debug, Clone, Copy)]
-#[allow(clippy::enum_variant_names)]
+#[derive(Debug, Clone)]
 enum PseudoClass {
     /// `:first-child` -- this element has no preceding sibling.
     FirstChild,
@@ -366,6 +365,13 @@ enum PseudoClass {
     /// `:only-child` -- the element is the sole child of its
     /// parent (both first AND last).
     OnlyChild,
+    /// `:not(arg)` (v0.7.15) -- matches an element NOT matching
+    /// `arg`.  `arg` is a full `SelectorList` so
+    /// `:not(.foo, .bar)` works.  Boxed because `SelectorList`
+    /// can transitively contain `PseudoClass::Not` again
+    /// (nested negations parse fine via `find_balanced_close_paren`,
+    /// matching CSS Selectors Level 4 semantics).
+    Not(Box<SelectorList>),
 }
 
 #[derive(Debug, Clone)]
@@ -462,31 +468,24 @@ fn parse_compound_recursive(
     match bytes.get(start) {
         None | Some(b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'+' | b'~' | b',') => (acc, start),
         Some(b':') => {
-            let end = scan_ident(bytes, start + 1);
-            let name = ident_string(bytes, start + 1, end).to_ascii_lowercase();
-            let parsed = match name.as_str() {
-                "first-child" => Some(PseudoClass::FirstChild),
-                "last-child" => Some(PseudoClass::LastChild),
-                "only-child" => Some(PseudoClass::OnlyChild),
-                _other => None,
-            };
+            let (parsed, after) = parse_pseudo_class(bytes, start);
             if let Some(pseudo) = parsed {
                 let new_pseudos: Vec<PseudoClass> = acc
                     .pseudo_classes
                     .iter()
-                    .copied()
+                    .cloned()
                     .chain(std::iter::once(pseudo))
                     .collect();
                 parse_compound_recursive(
                     bytes,
-                    end,
+                    after,
                     CompoundSelector {
                         pseudo_classes: new_pseudos,
                         ..acc
                     },
                 )
             } else {
-                parse_compound_recursive(bytes, end, acc)
+                parse_compound_recursive(bytes, after, acc)
             }
         }
         Some(b'*') => parse_compound_recursive(
@@ -564,6 +563,56 @@ fn parse_compound_recursive(
                 }
             }
         }
+    }
+}
+
+/// v0.7.13 / v0.7.15 helper: parse a pseudo-class starting at
+/// the leading `:`.  Returns `(Some(pseudo), after_pos)` when the
+/// name is recognised, `(None, after_pos)` for unknown names
+/// (forward-compat for `:nth-child(n)` etc.).  Handles both the
+/// bare form `:first-child` and the `:not(arg)` paren form via
+/// [`find_balanced_close_paren`] -- the inner argument is parsed
+/// recursively as a `SelectorList` so `:not(.a, .b)` works.
+fn parse_pseudo_class(bytes: &[u8], start: usize) -> (Option<PseudoClass>, usize) {
+    let ident_end = scan_ident(bytes, start + 1);
+    let name = ident_string(bytes, start + 1, ident_end).to_ascii_lowercase();
+    if bytes.get(ident_end) == Some(&b'(') {
+        let arg_start = ident_end + 1;
+        let close = find_balanced_close_paren(bytes, arg_start, 1);
+        let arg_text = ident_string(bytes, arg_start, close);
+        let after_close = if bytes.get(close) == Some(&b')') {
+            close + 1
+        } else {
+            close
+        };
+        let parsed = match name.as_str() {
+            "not" => Some(PseudoClass::Not(Box::new(parse_selector_list(&arg_text)))),
+            _other => None,
+        };
+        (parsed, after_close)
+    } else {
+        let parsed = match name.as_str() {
+            "first-child" => Some(PseudoClass::FirstChild),
+            "last-child" => Some(PseudoClass::LastChild),
+            "only-child" => Some(PseudoClass::OnlyChild),
+            _other => None,
+        };
+        (parsed, ident_end)
+    }
+}
+
+/// v0.7.15 helper: walk `bytes` from `start` (just past an opening
+/// `(`) until the matching close `)` at nesting depth 1.  Supports
+/// arbitrary paren nesting so `:not(:not(.foo))` parses correctly.
+/// Returns the index of the matching `)`, or `bytes.len()` when
+/// the input is unbalanced (treated as graceful EOF).
+fn find_balanced_close_paren(bytes: &[u8], start: usize, depth: u32) -> usize {
+    match bytes.get(start) {
+        None => bytes.len(),
+        Some(b'(') => find_balanced_close_paren(bytes, start + 1, depth + 1),
+        Some(b')') if depth == 1 => start,
+        Some(b')') => find_balanced_close_paren(bytes, start + 1, depth - 1),
+        Some(_) => find_balanced_close_paren(bytes, start + 1, depth),
     }
 }
 
@@ -756,7 +805,7 @@ fn matches_compound(node_id: ObjectId, compound: &CompoundSelector, heap: &Heap)
     let pseudos_ok = compound
         .pseudo_classes
         .iter()
-        .all(|p| matches_pseudo_class(node_id, *p, heap));
+        .all(|p| matches_pseudo_class(node_id, p, heap));
     if !pseudos_ok {
         return false;
     }
@@ -890,20 +939,28 @@ fn next_sibling_id(node_id: ObjectId, heap: &Heap) -> Option<ObjectId> {
         .and_then(object_id_of)
 }
 
-fn matches_pseudo_class(node_id: ObjectId, pseudo: PseudoClass, heap: &Heap) -> bool {
-    // All three pseudo-classes require the candidate to actually
-    // have a parent element -- a detached/root element matches
-    // none of them.
-    if parent_element_id(node_id, heap).is_none() {
-        return false;
-    }
+fn matches_pseudo_class(node_id: ObjectId, pseudo: &PseudoClass, heap: &Heap) -> bool {
+    // Structural pseudo-classes require an actual parent element
+    // -- detached / root nodes match none.  `:not(...)` doesn't
+    // need the guard since negation should apply uniformly.
     match pseudo {
-        PseudoClass::FirstChild => previous_sibling_id(node_id, heap).is_none(),
-        PseudoClass::LastChild => next_sibling_id(node_id, heap).is_none(),
-        PseudoClass::OnlyChild => {
-            previous_sibling_id(node_id, heap).is_none() && next_sibling_id(node_id, heap).is_none()
+        PseudoClass::FirstChild => {
+            has_parent(node_id, heap) && previous_sibling_id(node_id, heap).is_none()
         }
+        PseudoClass::LastChild => {
+            has_parent(node_id, heap) && next_sibling_id(node_id, heap).is_none()
+        }
+        PseudoClass::OnlyChild => {
+            has_parent(node_id, heap)
+                && previous_sibling_id(node_id, heap).is_none()
+                && next_sibling_id(node_id, heap).is_none()
+        }
+        PseudoClass::Not(list) => !matches_selector_list(node_id, list, heap),
     }
+}
+
+fn has_parent(node_id: ObjectId, heap: &Heap) -> bool {
+    parent_element_id(node_id, heap).is_some()
 }
 
 fn element_children(node_id: ObjectId, heap: &Heap) -> Vec<ObjectId> {
